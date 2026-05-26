@@ -1066,7 +1066,7 @@ class CloudStreamApp {
   // Local Storage / History Manager
   loadHistory() {
     try {
-      const data = localStorage.getItem('cloudstream_history');
+      const data = localStorage.getItem('rawstream_history');
       return data ? JSON.parse(data) : [];
     } catch (e) {
       console.error('History load failed:', e);
@@ -1076,7 +1076,7 @@ class CloudStreamApp {
 
   saveHistory() {
     try {
-      localStorage.setItem('cloudstream_history', JSON.stringify(this.history));
+      localStorage.setItem('rawstream_history', JSON.stringify(this.history));
     } catch (e) {
       console.error('History save failed:', e);
     }

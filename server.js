@@ -1,5 +1,5 @@
 /**
- * CloudStream — Production Server
+ * RawStream — Production Server
  * Serves the Vite-built frontend and all /api/* streaming endpoints.
  * Works on any host that has yt-dlp and ffmpeg in PATH (or set via env vars).
  */
@@ -302,7 +302,7 @@ app.get('/{*path}', (_req, res) => res.sendFile(path.join(distPath, 'index.html'
 // ─── Start ─────────────────────────────────────────────────────────────────────
 initTools().then(() => {
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`\n🚀 CloudStream running at http://localhost:${PORT}\n`);
+    console.log(`\n🚀 RawStream running at http://localhost:${PORT}\n`);
   });
 }).catch(err => {
   console.error('Startup failed:', err);
