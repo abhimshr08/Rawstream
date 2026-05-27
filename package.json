@@ -13,6 +13,7 @@
     "vite": "^5.0.0"
   },
   "dependencies": {
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "webtorrent": "^3.0.11"
   }
 }

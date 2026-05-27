@@ -2,8 +2,97 @@ import { defineConfig } from 'vite';
 import { Readable } from 'stream';
 import { exec, spawn } from 'child_process';
 import util from 'util';
+import path from 'path';
+import os from 'os';
+import WebTorrent from 'webtorrent';
 
 const execPromise = util.promisify(exec);
+
+// ─── Torrent Manager ───────────────────────────────────────────────────────────
+let torrentClient = null;
+const activeTorrents = new Map();
+
+function getTorrentClient() {
+  if (!torrentClient) {
+    torrentClient = new WebTorrent();
+    torrentClient.on('error', (err) => {
+      console.error('[WebTorrent Dev Client Error]:', err.message);
+    });
+  }
+  return torrentClient;
+}
+
+function cleanOldTorrents() {
+  const MAX_TORRENTS = 3;
+  if (activeTorrents.size <= MAX_TORRENTS) return;
+
+  let oldestKey = null;
+  let oldestTime = Infinity;
+  for (const [key, value] of activeTorrents.entries()) {
+    if (value.lastAccessed < oldestTime) {
+      oldestTime = value.lastAccessed;
+      oldestKey = key;
+    }
+  }
+
+  if (oldestKey) {
+    const entry = activeTorrents.get(oldestKey);
+    console.log(`[TorrentManager Dev] Destroying LRU torrent: ${entry.torrent.name || oldestKey}`);
+    entry.torrent.destroy(() => {
+      activeTorrents.delete(oldestKey);
+    });
+  }
+}
+
+function addTorrent(torrentUrl) {
+  const client = getTorrentClient();
+  
+  return new Promise((resolve, reject) => {
+    if (activeTorrents.has(torrentUrl)) {
+      const entry = activeTorrents.get(torrentUrl);
+      entry.lastAccessed = Date.now();
+      
+      if (entry.torrent.ready) {
+        resolve(entry.torrent);
+      } else {
+        entry.torrent.once('ready', () => resolve(entry.torrent));
+      }
+      return;
+    }
+
+    console.log(`[TorrentManager Dev] Adding torrent: ${torrentUrl.substring(0, 60)}...`);
+    const torrent = client.add(torrentUrl, {
+      path: path.join(os.tmpdir(), 'webtorrent')
+    });
+    
+    activeTorrents.set(torrentUrl, {
+      torrent,
+      lastAccessed: Date.now()
+    });
+    
+    cleanOldTorrents();
+
+    torrent.once('ready', () => {
+      console.log(`[TorrentManager Dev] Torrent ready: ${torrent.name}`);
+      resolve(torrent);
+    });
+
+    torrent.once('error', (err) => {
+      console.error(`[TorrentManager Dev] Torrent error:`, err.message);
+      activeTorrents.delete(torrentUrl);
+      reject(err);
+    });
+
+    setTimeout(() => {
+      if (!torrent.ready && activeTorrents.has(torrentUrl)) {
+        console.log(`[TorrentManager Dev] Metadata timeout for: ${torrentUrl.substring(0, 60)}`);
+        torrent.destroy();
+        activeTorrents.delete(torrentUrl);
+        reject(new Error('Metadata resolution timeout (no peers or slow connection)'));
+      }
+    }, 30000);
+  });
+}
 
 // ─── Tool paths ───────────────────────────────────────────────────────────────
 const YTDLP   = '/Users/abhishekmishra/miniconda3/bin/yt-dlp';
@@ -215,6 +304,189 @@ export default defineConfig({
           }
         });
 
+
+        // Helper to read raw body for POST .torrent uploads
+        const readRawBody = (req) => {
+          return new Promise((resolve, reject) => {
+            const chunks = [];
+            req.on('data', chunk => chunks.push(chunk));
+            req.on('end', () => resolve(Buffer.concat(chunks)));
+            req.on('error', err => reject(err));
+          });
+        };
+
+        // ─── /api/torrent/info ─────────────────────────────────────────────────
+        server.middlewares.use('/api/torrent/info', async (req, res) => {
+          res.setHeader('Content-Type', 'application/json');
+          res.setHeader('Access-Control-Allow-Origin', '*');
+
+          try {
+            let torrentSource;
+            if (req.method === 'POST') {
+              const buffer = await readRawBody(req);
+              if (!buffer || buffer.length === 0) {
+                res.statusCode = 400;
+                res.end(JSON.stringify({ error: 'Empty POST body' }));
+                return;
+              }
+              torrentSource = buffer;
+            } else {
+              const reqUrl = new URL(req.url, `http://${req.headers.host || 'localhost:3000'}`);
+              const torrentUrl = reqUrl.searchParams.get('torrentUrl');
+              if (!torrentUrl) {
+                res.statusCode = 400;
+                res.end(JSON.stringify({ error: 'Missing torrentUrl parameter' }));
+                return;
+              }
+              torrentSource = torrentUrl;
+            }
+
+            const torrent = await addTorrent(torrentSource);
+            const files = torrent.files.map((file, idx) => ({
+              name: file.name,
+              path: file.path,
+              length: file.length,
+              index: idx
+            }));
+
+            res.statusCode = 200;
+            res.end(JSON.stringify({
+              name: torrent.name,
+              infoHash: torrent.infoHash,
+              files
+            }));
+          } catch (err) {
+            console.error('[TorrentInfo Dev Error]', err.message);
+            res.statusCode = 500;
+            res.end(JSON.stringify({ error: err.message }));
+          }
+        });
+
+        // ─── /api/torrent/status ───────────────────────────────────────────────
+        server.middlewares.use('/api/torrent/status', (req, res) => {
+          res.setHeader('Content-Type', 'application/json');
+          res.setHeader('Access-Control-Allow-Origin', '*');
+
+          try {
+            const reqUrl = new URL(req.url, `http://${req.headers.host || 'localhost:3000'}`);
+            const infoHash = reqUrl.searchParams.get('infoHash');
+
+            if (!infoHash) {
+              res.statusCode = 400;
+              res.end(JSON.stringify({ error: 'Missing infoHash parameter' }));
+              return;
+            }
+
+            const entry = activeTorrents.get(infoHash.toLowerCase());
+            if (!entry) {
+              res.statusCode = 404;
+              res.end(JSON.stringify({ error: 'Torrent not active or cached' }));
+              return;
+            }
+
+            const { torrent } = entry;
+            entry.lastAccessed = Date.now();
+
+            res.statusCode = 200;
+            res.end(JSON.stringify({
+              name: torrent.name,
+              infoHash: torrent.infoHash,
+              downloadSpeed: torrent.downloadSpeed,
+              uploadSpeed: torrent.uploadSpeed,
+              numPeers: torrent.numPeers,
+              progress: torrent.progress,
+              downloaded: torrent.downloaded,
+              length: torrent.length
+            }));
+          } catch (err) {
+            res.statusCode = 500;
+            res.end(JSON.stringify({ error: err.message }));
+          }
+        });
+
+        // ─── /api/torrent/stream ───────────────────────────────────────────────
+        server.middlewares.use('/api/torrent/stream', async (req, res) => {
+          res.setHeader('Access-Control-Allow-Origin', '*');
+
+          try {
+            const reqUrl = new URL(req.url, `http://${req.headers.host || 'localhost:3000'}`);
+            const infoHash = reqUrl.searchParams.get('infoHash');
+            const fileIndex = reqUrl.searchParams.get('fileIndex');
+
+            if (!infoHash) {
+              res.statusCode = 400;
+              res.end('Missing infoHash parameter');
+              return;
+            }
+
+            const idx = parseInt(fileIndex || '0', 10);
+            const torrent = await addTorrent(infoHash);
+            const file = torrent.files[idx];
+            if (!file) {
+              res.statusCode = 404;
+              res.end('File not found in torrent');
+              return;
+            }
+
+            const entry = activeTorrents.get(infoHash.toLowerCase());
+            if (entry) entry.lastAccessed = Date.now();
+
+            res.setHeader('Accept-Ranges', 'bytes');
+            const mimeTypes = {
+              '.mp4': 'video/mp4',
+              '.mkv': 'video/x-matroska',
+              '.avi': 'video/x-msvideo',
+              '.webm': 'video/webm',
+              '.mov': 'video/quicktime',
+              '.mp3': 'audio/mpeg',
+              '.m4a': 'audio/mp4',
+              '.aac': 'audio/aac',
+              '.ogg': 'audio/ogg'
+            };
+            const ext = path.extname(file.name).toLowerCase();
+            const contentType = mimeTypes[ext] || 'application/octet-stream';
+            res.setHeader('Content-Type', contentType);
+
+            let range = req.headers.range;
+            if (range) {
+              const parts = range.replace(/bytes=/, "").split("-");
+              const start = parseInt(parts[0], 10);
+              const end = parts[1] ? parseInt(parts[1], 10) : file.length - 1;
+              const chunksize = (end - start) + 1;
+
+              res.statusCode = 206;
+              res.setHeader('Content-Range', `bytes ${start}-${end}/${file.length}`);
+              res.setHeader('Content-Length', chunksize);
+
+              console.log(`[TorrentStream Dev] Range stream: bytes ${start}-${end}/${file.length}`);
+              const stream = file.createReadStream({ start, end });
+              stream.pipe(res);
+
+              req.on('close', () => {
+                stream.destroy();
+              });
+            } else {
+              res.statusCode = 200;
+              res.setHeader('Content-Length', file.length);
+
+              console.log(`[TorrentStream Dev] Full stream`);
+              const stream = file.createReadStream();
+              stream.pipe(res);
+
+              req.on('close', () => {
+                stream.destroy();
+              });
+            }
+
+          } catch (err) {
+            console.error('[TorrentStream Dev Error]', err.message);
+            if (!res.headersSent) {
+              res.statusCode = 500;
+              res.end(err.message);
+            }
+          }
+        });
+
         // ─── /api/probe ──────────────────────────────────────────────────────
         // Probe for video codecs and metadata via ffprobe (used for OneDrive/local)
         server.middlewares.use('/api/probe', async (req, res) => {
@@ -230,15 +502,22 @@ export default defineConfig({
               return;
             }
 
-            const isLocal = targetUrl.startsWith('/');
+            let resolvedUrl = targetUrl;
+            if (targetUrl.startsWith('/')) {
+              if (targetUrl.startsWith('/api/')) {
+                resolvedUrl = `http://127.0.0.1:3000${targetUrl}`;
+              }
+            }
+
+            const isLocal = resolvedUrl.startsWith('/');
 
             if (!isLocal) {
               const allowedDomains = [
                 'drive.google.com', 'drive.usercontent.google.com', 'docs.google.com',
                 'googlevideo.com', 'c.drive.google.com',
-                'api.onedrive.com', 'onedrive.live.com', '1drv.ms'
+                'api.onedrive.com', 'onedrive.live.com', '1drv.ms', 'localhost', '127.0.0.1'
               ];
-              const targetObj = new URL(targetUrl);
+              const targetObj = new URL(resolvedUrl);
               const isAllowed = allowedDomains.some(d =>
                 targetObj.hostname === d || targetObj.hostname.endsWith('.' + d)
               );
@@ -253,8 +532,8 @@ export default defineConfig({
 
             const userAgent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
             const cmd = isLocal
-              ? `${FFPROBE} -v error -show_format -show_streams -of json "${targetUrl.replace(/"/g, '\\"')}"`
-              : `${FFPROBE} -v error -show_format -show_streams -headers "User-Agent: ${userAgent}\r\n" -of json "${targetUrl.replace(/"/g, '\\"')}"`;
+              ? `${FFPROBE} -v error -show_format -show_streams -of json "${resolvedUrl.replace(/"/g, '\\"')}"`
+              : `${FFPROBE} -v error -show_format -show_streams -headers "User-Agent: ${userAgent}\r\n" -of json "${resolvedUrl.replace(/"/g, '\\"')}"`;
 
             const { stdout } = await execPromise(cmd, { timeout: 20000 });
             const metadata = JSON.parse(stdout);
@@ -304,11 +583,18 @@ export default defineConfig({
               return;
             }
 
-            const isLocal = targetUrl.startsWith('/');
+            let resolvedUrl = targetUrl;
+            if (targetUrl.startsWith('/')) {
+              if (targetUrl.startsWith('/api/')) {
+                resolvedUrl = `http://127.0.0.1:3000${targetUrl}`;
+              }
+            }
+
+            const isLocal = resolvedUrl.startsWith('/');
 
             if (isLocal) {
               const fs = await import('fs');
-              if (!fs.existsSync(targetUrl)) {
+              if (!fs.existsSync(resolvedUrl)) {
                 res.statusCode = 404;
                 res.setHeader('Access-Control-Allow-Origin', '*');
                 res.end('Local file not found');
@@ -318,9 +604,9 @@ export default defineConfig({
               const allowedDomains = [
                 'drive.google.com', 'drive.usercontent.google.com', 'docs.google.com',
                 'googlevideo.com', 'c.drive.google.com',
-                'api.onedrive.com', 'onedrive.live.com', '1drv.ms'
+                'api.onedrive.com', 'onedrive.live.com', '1drv.ms', 'localhost', '127.0.0.1'
               ];
-              const targetObj = new URL(targetUrl);
+              const targetObj = new URL(resolvedUrl);
               const isAllowed = allowedDomains.some(d =>
                 targetObj.hostname === d || targetObj.hostname.endsWith('.' + d)
               );
@@ -353,8 +639,8 @@ export default defineConfig({
                 : ['-c:a', 'aac', '-b:a', '192k'];
 
               const ffmpegArgs = isLocal
-                ? ['-ss', start, '-i', targetUrl, ...vopts, ...aopts, '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moov', '-']
-                : ['-ss', start, '-headers', `User-Agent: ${userAgent}\r\n`, '-i', targetUrl, ...vopts, ...aopts, '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moov', '-'];
+                ? ['-ss', start, '-i', resolvedUrl, ...vopts, ...aopts, '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moov', '-']
+                : ['-ss', start, '-headers', `User-Agent: ${userAgent}\r\n`, '-i', resolvedUrl, ...vopts, ...aopts, '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moov', '-'];
 
               const ffmpegProcess = spawn(FFMPEG, ffmpegArgs);
 
@@ -374,7 +660,7 @@ export default defineConfig({
             const headers = { 'User-Agent': userAgent };
             if (req.headers.range) headers['range'] = req.headers.range;
 
-            const response = await fetch(targetUrl, { headers, redirect: 'follow' });
+            const response = await fetch(resolvedUrl, { headers, redirect: 'follow' });
             const contentType = response.headers.get('content-type') || '';
 
             if (contentType.includes('text/html')) {

@@ -1371,7 +1371,7 @@ class CloudStreamApp {
     reader.readAsArrayBuffer(file);
   }
 
-  loadTorrent(torrentSource) {
+  async loadTorrent(torrentSource) {
     this.destroyTorrent();
     this.showLoader(true);
 
@@ -1379,138 +1379,153 @@ class CloudStreamApp {
     this.dom.video.removeAttribute('src');
     this.dom.video.load();
     this.dom.playerPlaceholder.classList.add('hidden');
+    this.dom.videoControls.classList.add('hidden-controls');
 
     this.setLoaderMessage('Connecting to peers...');
+    this.logDebug('Connecting to backend torrent manager...');
 
     try {
-      if (!this.torrentClient) {
-        this.torrentClient = new window.WebTorrent();
+      let response;
+      if (torrentSource instanceof Uint8Array || ArrayBuffer.isView(torrentSource)) {
+        // Upload dropped torrent file
+        response = await fetch('/api/torrent/info', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/octet-stream' },
+          body: torrentSource
+        });
+      } else {
+        // Request torrent URL / magnet
+        response = await fetch(`/api/torrent/info?torrentUrl=${encodeURIComponent(torrentSource)}`);
       }
 
-      this.logDebug('WebTorrent client initialized. Adding torrent...');
+      const info = await response.json();
+      if (!response.ok || info.error) {
+        throw new Error(info.error || `Server returned error (${response.status})`);
+      }
 
-      // CRITICAL: Browsers CANNOT use UDP trackers (udp://). Only WebSocket (wss://) trackers
-      // work in a browser context. We inject reliable public wss trackers so peer discovery
-      // succeeds even when the magnet's own tracker list is entirely UDP-only.
-      const wsTrackers = [
-        'wss://tracker.btorrent.xyz',
-        'wss://tracker.openwebtorrent.com',
-        'wss://tracker.webtorrent.dev',
-        'wss://tracker.lab.vvc.niif.hu',
-      ];
+      this.logDebug(`Torrent resolved. Name: "${info.name}", Hash: ${info.infoHash}, Files: ${info.files.length}`);
 
-      this.torrentClient.add(torrentSource, { announce: wsTrackers }, (torrent) => {
-        this.activeTorrent = torrent;
-        this.logDebug(`Torrent metadata resolved. Name: "${torrent.name}", Hash: ${torrent.infoHash}, Files: ${torrent.files.length}`);
-
-        // Find first video file
-        const videoFile = torrent.files.find(file => {
-          const name = file.name.toLowerCase();
-          return name.endsWith('.mp4') || name.endsWith('.webm') || name.endsWith('.mkv') ||
-                 name.endsWith('.avi') || name.endsWith('.mov') || name.endsWith('.ogv') ||
-                 name.endsWith('.m4v') || name.endsWith('.ts');
-        });
-
-        if (!videoFile) {
-          this.logDebug('Error: No playable video files found in this torrent.');
-          this.showNotification('No playable video found in torrent.');
-          this.destroyTorrent();
-          this.resetPlayerToPlaceholder();
-          return;
-        }
-
-        this.logDebug(`Selected: "${videoFile.name}" (${this.formatBytes(videoFile.length)})`);
-        this.dom.torrentStatsCard.classList.remove('hidden');
-        this.dom.torrentName.textContent = videoFile.name;
-
-        this.showLoader(false);
-        this.dom.videoControls.classList.remove('hidden-controls');
-
-        // renderTo is the current WebTorrent API; fall back to streamTo for older builds
-        const onStreamError = (err) => {
-          this.logDebug(`Torrent stream error: ${err ? err.message : 'unknown'}`);
-          this.showNotification('Stream failed — not enough peers yet. Wait a moment and try again.');
-        };
-
-        if (typeof videoFile.renderTo === 'function') {
-          videoFile.renderTo(this.dom.video, { autoplay: true }, (err) => {
-            if (err) {
-              this.logDebug(`renderTo failed (${err.message}), trying streamTo...`);
-              if (typeof videoFile.streamTo === 'function') {
-                videoFile.streamTo(this.dom.video, (err2) => { if (err2) onStreamError(err2); });
-              } else {
-                onStreamError(err);
-              }
-            } else {
-              this.logDebug('renderTo succeeded — streaming from torrent.');
-            }
-          });
-        } else if (typeof videoFile.streamTo === 'function') {
-          videoFile.streamTo(this.dom.video, (err) => { if (err) onStreamError(err); });
-        } else {
-          this.logDebug('No renderTo or streamTo available on this WebTorrent build.');
-          this.showNotification('WebTorrent API unavailable. Try refreshing.');
-        }
-
-        this.currentVideo = {
-          title: videoFile.name,
-          originalUrl: typeof torrentSource === 'string'
-            ? torrentSource
-            : `magnet:?xt=urn:btih:${torrent.infoHash}`,
-          service: 'torrent',
-          timestamp: Date.now()
-        };
-
-        this.addToHistory(this.currentVideo);
-
-        torrent.on('download', () => this.updateTorrentStats(torrent));
-        torrent.on('upload',   () => this.updateTorrentStats(torrent));
-
-        // Log each new peer connection for debugging
-        torrent.on('wire', (wire) => {
-          this.logDebug(`Peer connected (total: ${torrent.numPeers}) — ${wire.remoteAddress || 'WebRTC'}`);
-          this.updateTorrentStats(torrent);
-        });
+      // Find first playable video file
+      const videoFile = info.files.find(file => {
+        const name = file.name.toLowerCase();
+        return name.endsWith('.mp4') || name.endsWith('.webm') || name.endsWith('.mkv') ||
+               name.endsWith('.avi') || name.endsWith('.mov') || name.endsWith('.ogv') ||
+               name.endsWith('.m4v') || name.endsWith('.ts');
       });
 
-      this.torrentClient.on('error', (err) => {
-        this.logDebug(`WebTorrent error: ${err.message}`);
-        this.showNotification(`Torrent error: ${err.message}`);
+      if (!videoFile) {
+        this.logDebug('Error: No playable video files found in this torrent.');
+        this.showNotification('No playable video found in torrent.');
         this.destroyTorrent();
         this.resetPlayerToPlaceholder();
-      });
+        return;
+      }
+
+      this.logDebug(`Selected: "${videoFile.name}" (${this.formatBytes(videoFile.length)})`);
+      this.dom.torrentStatsCard.classList.remove('hidden');
+      this.dom.torrentName.textContent = videoFile.name;
+
+      // Start the stream load pipeline
+      await this.loadTorrentStream(torrentSource, info.infoHash, videoFile);
 
     } catch (err) {
-      this.logDebug(`WebTorrent init failed: ${err.message}`);
-      this.showNotification('WebTorrent failed to start. Please refresh.');
-      this.showLoader(false);
+      this.logDebug(`Torrent loading failed: ${err.message}`);
+      this.showNotification(`Torrent failed to load: ${err.message}`);
+      this.destroyTorrent();
+      this.resetPlayerToPlaceholder();
     }
   }
 
-  updateTorrentStats(torrent) {
-    this.dom.torrentPeers.textContent = `${torrent.numPeers} peer${torrent.numPeers !== 1 ? 's' : ''}`;
-    this.dom.torrentSpeed.textContent = `${this.formatBytes(torrent.downloadSpeed)}/s`;
-    this.dom.torrentProgress.textContent = `${(torrent.progress * 100).toFixed(1)}%`;
+  async loadTorrentStream(torrentSource, infoHash, videoFile) {
+    const streamUrl = `/api/torrent/stream?infoHash=${encodeURIComponent(infoHash)}&fileIndex=${videoFile.index}`;
+    this.logDebug(`Torrent stream resolved. Proxy URL: ${streamUrl}`);
+    this.setLoaderMessage('Analyzing torrent media...');
+
+    // Probe the torrent stream via /api/probe
+    try {
+      const probeRes = await fetch(`/api/probe?url=${encodeURIComponent(streamUrl)}`);
+      const probeData = await probeRes.json();
+
+      if (probeData.error) throw new Error(probeData.error);
+
+      this.logDebug(`Probe Torrent: needsTranscode=${probeData.needsTranscode}, v=${probeData.videoCodec}, a=${probeData.audioCodec}`);
+      this.needsTranscode = probeData.needsTranscode;
+      this.mediaDuration = probeData.duration;
+      this.vcodec = probeData.videoCodec;
+      this.acodec = probeData.audioCodec;
+      this.transcodeStartTime = 0;
+    } catch (err) {
+      this.logDebug(`Probe skipped (${err.message}), using direct stream.`);
+      this.needsTranscode = false;
+      this.mediaDuration = 0;
+      this.transcodeStartTime = 0;
+    }
+
+    let finalStreamUrl = streamUrl;
+    if (this.needsTranscode) {
+      finalStreamUrl = `/api/stream?url=${encodeURIComponent(streamUrl)}&transcode=true&vcodec=${encodeURIComponent(this.vcodec)}&acodec=${encodeURIComponent(this.acodec)}`;
+      this.logDebug('Torrent video requires transcoding. Spawning ffmpeg source.');
+    } else {
+      this.logDebug('Torrent video natively supported. Loading direct stream.');
+    }
+
+    this.setLoaderMessage('Buffering stream...');
+    this.logDebug(`Setting video src: ${finalStreamUrl}`);
+    this.dom.video.src = finalStreamUrl;
+    this.dom.video.load();
+    this.showLoader(false);
+    this.dom.videoControls.classList.remove('hidden-controls');
+
+    if (this.needsTranscode && this.mediaDuration > 0) {
+      this.dom.durationTime.textContent = this.formatTime(this.mediaDuration);
+    }
+
+    this.currentVideo = {
+      id: infoHash,
+      title: videoFile.name,
+      originalUrl: typeof torrentSource === 'string'
+        ? torrentSource
+        : `magnet:?xt=urn:btih:${infoHash}`,
+      streamUrl: finalStreamUrl,
+      service: 'torrent',
+      timestamp: Date.now()
+    };
+
+    this.addToHistory(this.currentVideo);
+
+    // Start stats polling
+    this.pollTorrentStats(infoHash);
+  }
+
+  pollTorrentStats(infoHash) {
+    this.clearTorrentPolling();
+
+    this.torrentPollingInterval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/torrent/status?infoHash=${encodeURIComponent(infoHash)}`);
+        if (!res.ok) return;
+        const stats = await res.json();
+        
+        this.dom.torrentPeers.textContent = `${stats.numPeers} peer${stats.numPeers !== 1 ? 's' : ''}`;
+        this.dom.torrentSpeed.textContent = `${this.formatBytes(stats.downloadSpeed)}/s`;
+        this.dom.torrentProgress.textContent = `${(stats.progress * 100).toFixed(1)}%`;
+      } catch (err) {
+        this.logDebug(`Stats poll error: ${err.message}`);
+      }
+    }, 1500);
+  }
+
+  clearTorrentPolling() {
+    if (this.torrentPollingInterval) {
+      clearInterval(this.torrentPollingInterval);
+      this.torrentPollingInterval = null;
+    }
   }
 
   destroyTorrent() {
     this.dom.torrentStatsCard.classList.add('hidden');
     this.dom.playerLoader.querySelector('p').textContent = 'Fetching file streams...';
-    
-    if (this.activeTorrent) {
-      try {
-        this.activeTorrent.destroy();
-      } catch (e) {}
-      this.activeTorrent = null;
-    }
-    
-    if (this.torrentClient) {
-      try {
-        this.torrentClient.destroy();
-      } catch (e) {}
-      this.torrentClient = null;
-      this.logDebug("WebTorrent client destroyed.");
-    }
+    this.clearTorrentPolling();
   }
 
   formatBytes(bytes, decimals = 2) {
