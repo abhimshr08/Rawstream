@@ -12,6 +12,7 @@ import { exec, spawn } from 'child_process';
 import util from 'util';
 import os from 'os';
 import WebTorrent from 'webtorrent';
+import parseTorrent from 'parse-torrent';
 
 const execPromise = util.promisify(exec);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -54,34 +55,50 @@ function cleanOldTorrents() {
   }
 }
 
-function addTorrent(torrentSource) {
+async function addTorrent(torrentSource) {
   const client = getTorrentClient();
   
+  let infoHash;
   if (typeof torrentSource === 'string' && torrentSource.length === 40 && /^[a-fA-F0-9]+$/.test(torrentSource)) {
-    const entry = activeTorrents.get(torrentSource.toLowerCase());
+    infoHash = torrentSource.toLowerCase();
+  } else {
+    try {
+      const parsed = await parseTorrent(torrentSource);
+      infoHash = parsed.infoHash.toLowerCase();
+    } catch (err) {
+      console.error('[TorrentManager] parseTorrent failed:', err.message);
+    }
+  }
+
+  if (infoHash) {
+    const entry = activeTorrents.get(infoHash);
     if (entry) {
       entry.lastAccessed = Date.now();
-      if (entry.torrent.ready) return Promise.resolve(entry.torrent);
+      if (entry.torrent.ready) return entry.torrent;
       return new Promise((resolve) => {
         entry.torrent.once('ready', () => resolve(entry.torrent));
       });
     }
-    return Promise.reject(new Error('Torrent not found by infoHash'));
+
+    // Check if it's already in the WebTorrent client by matching infoHash
+    const existing = client.torrents.find(t => t.infoHash.toLowerCase() === infoHash);
+    if (existing) {
+      activeTorrents.set(infoHash, {
+        torrent: existing,
+        lastAccessed: Date.now()
+      });
+      cleanOldTorrents();
+      if (existing.ready) return existing;
+      return new Promise((resolve) => {
+        existing.once('ready', () => resolve(existing));
+      });
+    }
   }
 
-  try {
-    const existing = client.get(torrentSource);
-    if (existing) {
-      const entry = activeTorrents.get(existing.infoHash.toLowerCase());
-      if (entry) {
-        entry.lastAccessed = Date.now();
-        if (existing.ready) return Promise.resolve(existing);
-        return new Promise((resolve) => {
-          existing.once('ready', () => resolve(existing));
-        });
-      }
-    }
-  } catch (e) {}
+  // If we only have infoHash but it's not active, we cannot add a new torrent from just infoHash
+  if (infoHash && (typeof torrentSource === 'string' && torrentSource.length === 40)) {
+    throw new Error('Torrent not found by infoHash and cannot be resolved');
+  }
 
   return new Promise((resolve, reject) => {
     console.log(`[TorrentManager] Adding new torrent...`);

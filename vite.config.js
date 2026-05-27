@@ -5,6 +5,7 @@ import util from 'util';
 import path from 'path';
 import os from 'os';
 import WebTorrent from 'webtorrent';
+import parseTorrent from 'parse-torrent';
 
 const execPromise = util.promisify(exec);
 
@@ -44,33 +45,69 @@ function cleanOldTorrents() {
   }
 }
 
-function addTorrent(torrentUrl) {
+async function addTorrent(torrentSource) {
   const client = getTorrentClient();
   
-  return new Promise((resolve, reject) => {
-    if (activeTorrents.has(torrentUrl)) {
-      const entry = activeTorrents.get(torrentUrl);
+  let infoHash;
+  if (typeof torrentSource === 'string' && torrentSource.length === 40 && /^[a-fA-F0-9]+$/.test(torrentSource)) {
+    infoHash = torrentSource.toLowerCase();
+  } else {
+    try {
+      const parsed = await parseTorrent(torrentSource);
+      infoHash = parsed.infoHash.toLowerCase();
+    } catch (err) {
+      console.error('[TorrentManager Dev] parseTorrent failed:', err.message);
+    }
+  }
+
+  if (infoHash) {
+    const entry = activeTorrents.get(infoHash);
+    if (entry) {
       entry.lastAccessed = Date.now();
-      
-      if (entry.torrent.ready) {
-        resolve(entry.torrent);
-      } else {
+      if (entry.torrent.ready) return entry.torrent;
+      return new Promise((resolve) => {
         entry.torrent.once('ready', () => resolve(entry.torrent));
-      }
-      return;
+      });
     }
 
-    console.log(`[TorrentManager Dev] Adding torrent: ${torrentUrl.substring(0, 60)}...`);
-    const torrent = client.add(torrentUrl, {
-      path: path.join(os.tmpdir(), 'webtorrent')
+    // Check if it's already in the WebTorrent client by matching infoHash
+    const existing = client.torrents.find(t => t.infoHash.toLowerCase() === infoHash);
+    if (existing) {
+      activeTorrents.set(infoHash, {
+        torrent: existing,
+        lastAccessed: Date.now()
+      });
+      cleanOldTorrents();
+      if (existing.ready) return existing;
+      return new Promise((resolve) => {
+        existing.once('ready', () => resolve(existing));
+      });
+    }
+  }
+
+  // If we only have infoHash but it's not active, we cannot add a new torrent from just infoHash
+  if (infoHash && (typeof torrentSource === 'string' && torrentSource.length === 40)) {
+    throw new Error('Torrent not found by infoHash and cannot be resolved');
+  }
+
+  return new Promise((resolve, reject) => {
+    console.log(`[TorrentManager Dev] Adding new torrent...`);
+    let torrent;
+    try {
+      torrent = client.add(torrentSource, {
+        path: path.join(os.tmpdir(), 'webtorrent')
+      });
+    } catch (err) {
+      return reject(err);
+    }
+
+    torrent.once('infoHash', () => {
+      activeTorrents.set(torrent.infoHash.toLowerCase(), {
+        torrent,
+        lastAccessed: Date.now()
+      });
+      cleanOldTorrents();
     });
-    
-    activeTorrents.set(torrentUrl, {
-      torrent,
-      lastAccessed: Date.now()
-    });
-    
-    cleanOldTorrents();
 
     torrent.once('ready', () => {
       console.log(`[TorrentManager Dev] Torrent ready: ${torrent.name}`);
@@ -79,15 +116,15 @@ function addTorrent(torrentUrl) {
 
     torrent.once('error', (err) => {
       console.error(`[TorrentManager Dev] Torrent error:`, err.message);
-      activeTorrents.delete(torrentUrl);
+      if (torrent.infoHash) activeTorrents.delete(torrent.infoHash.toLowerCase());
       reject(err);
     });
 
     setTimeout(() => {
-      if (!torrent.ready && activeTorrents.has(torrentUrl)) {
-        console.log(`[TorrentManager Dev] Metadata timeout for: ${torrentUrl.substring(0, 60)}`);
+      if (!torrent.ready) {
+        console.log('[TorrentManager Dev] Metadata timeout.');
+        if (torrent.infoHash) activeTorrents.delete(torrent.infoHash.toLowerCase());
         torrent.destroy();
-        activeTorrents.delete(torrentUrl);
         reject(new Error('Metadata resolution timeout (no peers or slow connection)'));
       }
     }, 30000);
