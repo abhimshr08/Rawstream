@@ -1,45 +1,41 @@
-# CloudStream - Premium Cloud Media Player
+# RawStream - Premium Cloud Media Player (V2 React)
 
-CloudStream is a premium, glassmorphic single-page web application that allows you to stream large videos directly from public Google Drive, Microsoft OneDrive, and BitTorrent magnet URIs/torrents. 
+RawStream is a premium, glassmorphic React single-page web application that allows you to stream large videos directly from public Google Drive, Microsoft OneDrive, and BitTorrent magnet URIs/torrents.
 
-It uses an advanced backend transcoding proxy powered by WebTorrent and FFmpeg, allowing you to play almost any video codec natively in the browser with full custom player controls.
+It uses an advanced backend transcoding proxy powered by WebTorrent and FFmpeg, coupled with a reactive frontend built on Vite and React for high-performance responsive streaming.
 
 ---
 
-## 💎 Premium Features
+## 💎 Premium Features (V2 Upgrades)
 
 ### 1. Unified Multi-Source Streaming
 *   **Cloud Links:** Parses and streams directly from Google Drive and Microsoft OneDrive sharing links.
 *   **BitTorrent & Magnet URIs:** Stream movies and shows directly from magnet links or by dragging-and-dropping `.torrent` files. Video pieces are downloaded sequentially on-demand using WebTorrent.
 *   **Bypass Engine:** Includes a Puppeteer-based stream resolver to bypass Google Drive's stream player restrictions and quota limitations.
 
-### 2. Custom Media Player Controls
-*   **Glassmorphic Design:** Sleek, modern interface using frosted glass textures, harmonious dark-mode palettes, and modern typography.
-*   **Playback Adjustments:** Custom speed selector (0.5x to 2x), aspect-ratio override menu (contain, cover, fill, 16:9, 4:3), video rotation (90°, 180°, 270°), and mirroring (horizontal/vertical).
-*   **Smooth Drag-Seek Timeline:** Interactive slider with hover-time tooltips, featuring a conflict-free dragging state that prevents playback updates from snapping the slider thumb.
-*   **Theater & Fullscreen Modes:** Double-click video or click controls for custom responsive viewport configurations.
+### 2. Modern React Architecture (New)
+*   **Vite + React Integration:** Completely migrated from legacy Vanilla JS spaghetti code to a modular, reactive component architecture (`src/App.jsx`, `Player.jsx`, `Controls.jsx`, `HistorySidebar.jsx`, `AdminDashboard.jsx`, etc.).
+*   **Optimized Performance:** Component state boundaries prevent unnecessary layout reflows, ensuring smooth and responsive playback.
 
-### 3. Dynamic Transcoding & Locked A/V Sync
-*   **On-the-Fly FFmpeg Transcoder:** Automatically detects non-browser-compatible codecs (like MKV, AVI, TS, HEVC/x265, AC3 audio) and transcodes them on-the-fly to 8-bit H.264 video (`yuv420p`) and AAC audio.
+### 3. V2 Premium Visual Enhancements
+*   **Visual CPU & Memory Meters:** The administrator control center features dynamic, visually styled RSS/heap memory indicators and CPU load progress meters.
+*   **Stacked Notification Toast System:** Replaced the single status alert banner with an interactive, floating toast notification stack that transitions smoothly in from the bottom-right corner.
+*   **Dynamic Audio Waveform Visualizer:** Renders a neon canvas-based wave or animated visualizer in the player container when playing audio-only formats or while video streams are buffering.
+*   **Subtitles & Quality Settings:** Upload local subtitles (`.srt`, `.vtt`) or load remote WebVTT URLs. Choose resolution qualities (Auto, 720p, 480p) from controls, carrying over current player seek points.
+*   **Ambient Cinema Glow:** Optimized canvas backlight glow captures video frames and draws hardware-accelerated CSS blur behind the player to create an immersive theater atmosphere.
+*   **Torrent Metadata Badges:** Codec tags, quality values, and transcoding status details are dynamically generated and displayed in a badge grid below the player.
+
+### 4. Playback Adjustments & locked A/V Sync
 *   **Locked A/V Sync:** Uses dynamic audio resampling (`aresample=async=1`), presentation timestamp regeneration (`+genpts`), and output zero-shifting (`avoid_negative_ts make_zero`) to prevent audio-video desynchronization during seeks or buffering.
-*   **Quality Presets:** Choose stream resolutions (Auto/Original, 720p, 480p) from the controls. Quality settings seamlessly reload the stream and carry over seek times.
-
-### 4. Smart Playback & Personalization
-*   **Netflix-Style Resuming:** Progress is synchronized to the user's history file every 5 seconds. If you exit and return, a glassmorphic dialog prompts: *"Resume playback from MM:SS?"*
-*   **Ambient Cinema Glow:** Optimized canvas backlight glow that captures color frames at 10fps and applies hardware-accelerated CSS blurs behind the player to create an immersive theater atmosphere with zero CPU overhead.
-*   **Custom Subtitles Menu:** Upload local `.srt` or `.vtt` files, or load remote WebVTT URLs. SRT subtitles are converted on-the-fly using regex to patch timestamp notation.
-
-### 5. Production-Grade Security & Admin Dashboard
-*   **Secure Sessions:** Cryptographically secure random 32-byte session tokens.
-*   **Salted Hashing:** User passwords are encrypted using salted SHA-256 hashing. Legacy user accounts are automatically migrated to salted credentials upon login.
-*   **Admin Dialogue Dashboard:** Accessible only to verified administrators. Allows monitoring real-time server statistics (system memory RSS, CPU load, uptime, active sessions), managing registered users, and purges WebTorrent cache items to release system storage.
+*   **Conflict-Free Timeline Scrubber:** Custom slider handles scrubbing without timeline snapback during live transcode streaming.
+*   **Netflix-Style Playback Resuming:** Playback progress is updated every 5 seconds. If you return to a half-watched video, a prompt offers to resume from where you left off.
 
 ---
 
 ## 🛠️ Installation & Setup
 
 ### Prerequisites
-*   [Node.js](https://nodejs.org/) (v16+)
+*   [Node.js](https://nodejs.org/) (v18+)
 *   [FFmpeg](https://ffmpeg.org/) and `ffprobe` installed and added to your system's PATH.
 
 ### Installation
@@ -68,23 +64,23 @@ It uses an advanced backend transcoding proxy powered by WebTorrent and FFmpeg, 
     npm run build
     npm start
     ```
-    Open `http://localhost:3000` (or the port specified by the server) to play.
+    Open `http://localhost:3000` to stream.
 
 ---
 
 ## 📂 Configuration & Permissions
 
-Source cloud links must be shared publicly for CloudStream to pull their streams.
+Source cloud links must be shared publicly for RawStream to pull their streams.
 
 ### Google Drive
 1. Right-click the video file in Google Drive -> **Share**.
 2. Under *General Access*, change from *Restricted* to **Anyone with the link can view**.
-3. Copy the link and paste it into CloudStream.
+3. Copy the link and paste it into RawStream.
 
 ### Microsoft OneDrive
 1. Select the file in OneDrive -> Click **Share** at the top.
 2. Ensure the setting is set to **"Anyone with the link can view"** (public).
-3. Copy the link and paste it into CloudStream.
+3. Copy the link and paste it into RawStream.
 
 ---
 

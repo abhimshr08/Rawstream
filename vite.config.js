@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
 import { Readable } from 'stream';
 import { exec, spawn } from 'child_process';
 import util from 'util';
@@ -261,6 +262,7 @@ export default defineConfig({
     open: false
   },
   plugins: [
+    react(),
     {
       name: 'stream-proxy',
       configureServer(server) {

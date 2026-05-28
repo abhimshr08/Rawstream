@@ -2079,3 +2079,136 @@ body {
   }
 }
 
+/* ==========================================================================
+   V2 Premium Visual Upgrades & Animations
+   ========================================================================== */
+
+/* Drag and Drop Dotted Overlay Animation */
+.drag-over {
+  border: 2px dashed var(--accent-primary) !important;
+  background: rgba(99, 102, 241, 0.08) !important;
+  animation: pulseDashedBorder 1.5s infinite;
+}
+@keyframes pulseDashedBorder {
+  0% { border-color: var(--accent-primary); box-shadow: 0 0 5px rgba(99, 102, 241, 0.3); }
+  50% { border-color: var(--accent-secondary); box-shadow: 0 0 15px rgba(168, 85, 247, 0.5); }
+  100% { border-color: var(--accent-primary); box-shadow: 0 0 5px rgba(99, 102, 241, 0.3); }
+}
+
+/* Toast Notification Stack */
+.toast-container {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 9999;
+  pointer-events: none;
+}
+.toast-item {
+  pointer-events: auto;
+  background: var(--glass-bg);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--glass-border);
+  color: white;
+  padding: 12px 20px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  box-shadow: var(--shadow-glass);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  animation: toastSlideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+.toast-item.exit {
+  animation: toastSlideOut 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+@keyframes toastSlideIn {
+  0% { transform: translateY(20px); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+@keyframes toastSlideOut {
+  0% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(0.9); opacity: 0; }
+}
+
+/* Premium kbd styling */
+.kbd-key {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--glass-border);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--accent-primary);
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.4);
+  text-shadow: 0 0 5px rgba(99, 102, 241, 0.4);
+  display: inline-block;
+}
+
+/* Admin Panel Status Meters */
+.stats-meter-container {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.05);
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-top: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.03);
+}
+.stats-meter-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
+  border-radius: 4px;
+  transition: width 0.5s ease-out;
+}
+
+/* Canvas Visualizer Overlay */
+.waveform-container {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 11, 16, 0.9);
+  z-index: 1;
+  pointer-events: none;
+  border-radius: 8px;
+}
+.waveform-visualizer {
+  width: 80%;
+  height: 100px;
+}
+
+/* Torrent Stream Metadata Badges */
+.metadata-badge-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.metadata-badge {
+  background: rgba(99, 102, 241, 0.08);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  color: var(--accent-primary);
+  font-size: 0.75rem;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  text-shadow: 0 0 5px rgba(99, 102, 241, 0.3);
+}
+.metadata-badge.secondary {
+  background: rgba(168, 85, 247, 0.08);
+  border: 1px solid rgba(168, 85, 247, 0.2);
+  color: var(--accent-secondary);
+  text-shadow: 0 0 5px rgba(168, 85, 247, 0.3);
+}
+
+
