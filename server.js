@@ -572,6 +572,11 @@ app.get('/api/torrent/stream', async (req, res) => {
 
       console.log(`[TorrentStream] Range stream: bytes ${start}-${end}/${file.length}`);
       const stream = file.createReadStream({ start, end });
+      
+      stream.on('error', (err) => {
+        console.error('[TorrentStream Range Error]', err.message);
+      });
+
       stream.pipe(res);
 
       req.on('close', () => {
@@ -583,6 +588,11 @@ app.get('/api/torrent/stream', async (req, res) => {
 
       console.log(`[TorrentStream] Full stream`);
       const stream = file.createReadStream();
+
+      stream.on('error', (err) => {
+        console.error('[TorrentStream Full Error]', err.message);
+      });
+
       stream.pipe(res);
 
       req.on('close', () => {

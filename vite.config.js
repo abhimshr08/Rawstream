@@ -497,6 +497,11 @@ export default defineConfig({
 
               console.log(`[TorrentStream Dev] Range stream: bytes ${start}-${end}/${file.length}`);
               const stream = file.createReadStream({ start, end });
+
+              stream.on('error', (err) => {
+                console.error('[TorrentStream Dev Range Error]', err.message);
+              });
+
               stream.pipe(res);
 
               req.on('close', () => {
@@ -508,6 +513,11 @@ export default defineConfig({
 
               console.log(`[TorrentStream Dev] Full stream`);
               const stream = file.createReadStream();
+
+              stream.on('error', (err) => {
+                console.error('[TorrentStream Dev Full Error]', err.message);
+              });
+
               stream.pipe(res);
 
               req.on('close', () => {
