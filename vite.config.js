@@ -839,8 +839,8 @@ export default defineConfig({
                 : ['-c:a', 'aac', '-b:a', '192k'];
 
               const ffmpegArgs = isLocal
-                ? ['-ss', start, '-i', resolvedUrl, ...vopts, ...aopts, '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moov', '-']
-                : ['-ss', start, '-headers', `User-Agent: ${userAgent}\r\n`, '-i', resolvedUrl, ...vopts, ...aopts, '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moov', '-'];
+                ? ['-ss', start, '-i', resolvedUrl, ...vopts, ...aopts, '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moof', '-']
+                : ['-ss', start, '-headers', `User-Agent: ${userAgent}\r\n`, '-i', resolvedUrl, ...vopts, ...aopts, '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moof', '-'];
 
               const ffmpegProcess = spawn(FFMPEG, ffmpegArgs);
 
@@ -850,7 +850,9 @@ export default defineConfig({
               res.setHeader('Cache-Control', 'no-cache');
 
               ffmpegProcess.stdout.pipe(res);
-              ffmpegProcess.stderr.on('data', () => {});
+              ffmpegProcess.stderr.on('data', (d) => {
+                console.error(`[FFmpeg Dev Transcode Stderr]: ${d.toString().trim()}`);
+              });
               ffmpegProcess.on('error', (err) => console.error('[ffmpeg]', err));
               req.on('close', () => ffmpegProcess.kill('SIGKILL'));
               return;

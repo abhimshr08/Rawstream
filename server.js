@@ -427,13 +427,15 @@ app.get('/api/stream', async (req, res) => {
       : ['-c:a','aac','-b:a','192k'];
 
     const ffArgs = isLocal
-      ? ['-ss', startT, '-i', resolvedUrl, ...vopts, ...aopts, '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moov', '-']
-      : ['-ss', startT, '-headers', `User-Agent: ${ua}\r\n`, '-i', resolvedUrl, ...vopts, ...aopts, '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moov', '-'];
+      ? ['-ss', startT, '-i', resolvedUrl, ...vopts, ...aopts, '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moof', '-']
+      : ['-ss', startT, '-headers', `User-Agent: ${ua}\r\n`, '-i', resolvedUrl, ...vopts, ...aopts, '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moof', '-'];
 
     const ff = spawn(FFMPEG, ffArgs);
     res.status(200).setHeader('Content-Type', 'video/mp4').setHeader('Cache-Control', 'no-cache');
     ff.stdout.pipe(res);
-    ff.stderr.on('data', () => {});
+    ff.stderr.on('data', (d) => {
+      console.error(`[FFmpeg Transcode Stderr]: ${d.toString().trim()}`);
+    });
     ff.on('error', err => console.error('[ffmpeg]', err));
     req.on('close', () => ff.kill('SIGKILL'));
     return;
