@@ -593,7 +593,7 @@ export default function App() {
             </svg>
             <h1>Raw<span>Stream</span></h1>
           </div>
-          <div className="header-actions">
+          <div className="header-actions" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
             {session.token && (
               <div className="user-profile-badge">
                 <User size={14} style={{ color: 'var(--accent-secondary)', filter: 'drop-shadow(0 0 4px var(--accent-secondary))' }} />

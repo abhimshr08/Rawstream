@@ -575,7 +575,7 @@ export default function Player({
       <video
         ref={videoRef}
         id="video-element"
-        preload="metadata"
+        preload="auto"
         playsInline
         referrerPolicy="no-referrer"
         style={getVideoStyles()}
