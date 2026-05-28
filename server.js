@@ -430,15 +430,16 @@ app.get('/api/stream', async (req, res) => {
         : ['-c:v','libx264','-preset','ultrafast','-tune','zerolatency','-crf','23', '-pix_fmt', 'yuv420p'];
     }
 
-    const aopts = supportedAudio.includes((acodec || '').toLowerCase())
-      ? ['-c:a','copy']
-      : ['-c:a','aac','-b:a','192k'];
+    const aopts = ['-c:a', 'aac', '-b:a', '192k', '-af', 'aresample=async=1'];
 
-    const inputArgs = (startT && startT !== '0') ? ['-ss', startT] : [];
+    const inputArgs = ['-fflags', '+genpts'];
+    if (startT && startT !== '0') {
+      inputArgs.push('-ss', startT);
+    }
 
     const ffArgs = isLocal
-      ? [...inputArgs, '-i', resolvedUrl, ...vopts, ...aopts, '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moof', '-']
-      : [...inputArgs, '-headers', `User-Agent: ${ua}\r\n`, '-i', resolvedUrl, ...vopts, ...aopts, '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moof', '-'];
+      ? [...inputArgs, '-i', resolvedUrl, ...vopts, ...aopts, '-avoid_negative_ts', 'make_zero', '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moof', '-']
+      : [...inputArgs, '-headers', `User-Agent: ${ua}\r\n`, '-i', resolvedUrl, ...vopts, ...aopts, '-avoid_negative_ts', 'make_zero', '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moof', '-'];
 
     const ff = spawn(FFMPEG, ffArgs);
     res.status(200).setHeader('Content-Type', 'video/mp4').setHeader('Cache-Control', 'no-cache');

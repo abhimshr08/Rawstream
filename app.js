@@ -151,6 +151,7 @@ class CloudStreamApp {
     this.ambientInterval = null;
     this.historySyncTimer = null;
     this.pendingResumeTime = 0;
+    this.probePollingInterval = null;
 
     this.init();
   }
@@ -668,6 +669,11 @@ class CloudStreamApp {
 
     this.checkForResumeProgress(id);
 
+    // Start probe polling if duration is not resolved yet
+    if (this.needsTranscode && this.mediaDuration === 0) {
+      this.startProbePolling();
+    }
+
     this.dom.video.play()
       .then(() => {
         this.logDebug('Autoplay succeeded.');
@@ -763,6 +769,11 @@ class CloudStreamApp {
     if (this.dom.ambientGlowCanvas && !this.ambientInterval) {
       this.ambientInterval = setInterval(() => this.updateAmbientGlow(), 100);
     }
+
+    // Start client-side re-probe polling if duration is 0
+    if (this.needsTranscode && this.mediaDuration === 0 && !this.probePollingInterval) {
+      this.startProbePolling();
+    }
   }
 
   onPause() {
@@ -832,11 +843,13 @@ class CloudStreamApp {
     this.dom.progressBar.value = 0;
     this.updateProgressBarGradient();
     this.dom.video.currentTime = 0;
+    this.clearProbePolling();
   }
 
   async onVideoError(e) {
     console.error('Video element loading error:', e);
     this.showLoader(false);
+    this.clearProbePolling();
 
     const proxiedUrl = this.dom.video.src;
     if (proxiedUrl && proxiedUrl.includes('/api/stream')) {
@@ -1398,8 +1411,11 @@ class CloudStreamApp {
 
     if (this.session.isAdmin) {
       this.dom.adminPanelBtn.classList.remove('hidden');
+      if (this.dom.toggleDebugBtn) this.dom.toggleDebugBtn.classList.remove('hidden');
     } else {
       this.dom.adminPanelBtn.classList.add('hidden');
+      if (this.dom.toggleDebugBtn) this.dom.toggleDebugBtn.classList.add('hidden');
+      this.toggleDebugLogs(false);
     }
 
     // Load and render history from backend
@@ -1417,6 +1433,8 @@ class CloudStreamApp {
     // Update UI
     this.dom.userProfileBadge.classList.add('hidden');
     this.dom.adminPanelBtn.classList.add('hidden');
+    if (this.dom.toggleDebugBtn) this.dom.toggleDebugBtn.classList.add('hidden');
+    this.toggleDebugLogs(false);
     this.history = [];
     this.renderHistory();
     this.showAuthScreen(true);
@@ -2139,6 +2157,11 @@ class CloudStreamApp {
 
     this.checkForResumeProgress(infoHash);
 
+    // Start probe polling if duration is not resolved yet
+    if (this.needsTranscode && this.mediaDuration === 0) {
+      this.startProbePolling();
+    }
+
     this.addToHistory(this.currentVideo);
 
     // Start stats polling
@@ -2170,10 +2193,56 @@ class CloudStreamApp {
     }
   }
 
+  startProbePolling() {
+    this.clearProbePolling();
+    if (!this.currentVideo || !this.currentVideo.rawStreamUrl) return;
+    
+    // Only poll if duration is 0 and needs transcoding
+    if (this.mediaDuration > 0 || !this.needsTranscode) return;
+
+    this.logDebug("Starting client-side re-probe polling for duration...");
+    const rawUrl = this.currentVideo.rawStreamUrl;
+
+    this.probePollingInterval = setInterval(async () => {
+      if (!this.currentVideo || this.currentVideo.rawStreamUrl !== rawUrl || this.mediaDuration > 0) {
+        this.clearProbePolling();
+        return;
+      }
+
+      try {
+        this.logDebug("Polling /api/probe for media duration...");
+        const res = await this.authenticatedFetch(`/api/probe?url=${encodeURIComponent(rawUrl)}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        
+        if (data.duration && data.duration > 0) {
+          this.logDebug(`Re-probe successful. Resolved duration: ${this.formatTime(data.duration)}`);
+          this.mediaDuration = data.duration;
+          this.dom.durationTime.textContent = this.formatTime(data.duration);
+          
+          // Trigger a timeupdate to refresh the progress bar
+          this.onTimeUpdate();
+          this.clearProbePolling();
+        }
+      } catch (err) {
+        this.logDebug(`Re-probe poll error: ${err.message}`);
+      }
+    }, 10000);
+  }
+
+  clearProbePolling() {
+    if (this.probePollingInterval) {
+      clearInterval(this.probePollingInterval);
+      this.probePollingInterval = null;
+      this.logDebug("Probe polling cleared.");
+    }
+  }
+
   destroyTorrent() {
     this.dom.torrentStatsCard.classList.add('hidden');
     this.dom.playerLoader.querySelector('p').textContent = 'Fetching file streams...';
     this.clearTorrentPolling();
+    this.clearProbePolling();
   }
 
   formatBytes(bytes, decimals = 2) {

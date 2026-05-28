@@ -843,15 +843,16 @@ export default defineConfig({
                   : ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-pix_fmt', 'yuv420p'];
               }
 
-              const aopts = supportedAudioCodecs.includes(acodec.toLowerCase())
-                ? ['-c:a', 'copy']
-                : ['-c:a', 'aac', '-b:a', '192k'];
+              const aopts = ['-c:a', 'aac', '-b:a', '192k', '-af', 'aresample=async=1'];
 
-              const inputArgs = (start && start !== '0') ? ['-ss', start] : [];
+              const inputArgs = ['-fflags', '+genpts'];
+              if (start && start !== '0') {
+                inputArgs.push('-ss', start);
+              }
 
               const ffmpegArgs = isLocal
-                ? [...inputArgs, '-i', resolvedUrl, ...vopts, ...aopts, '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moof', '-']
-                : [...inputArgs, '-headers', `User-Agent: ${userAgent}\r\n`, '-i', resolvedUrl, ...vopts, ...aopts, '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moof', '-'];
+                ? [...inputArgs, '-i', resolvedUrl, ...vopts, ...aopts, '-avoid_negative_ts', 'make_zero', '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moof', '-']
+                : [...inputArgs, '-headers', `User-Agent: ${userAgent}\r\n`, '-i', resolvedUrl, ...vopts, ...aopts, '-avoid_negative_ts', 'make_zero', '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moof', '-'];
 
               const ffmpegProcess = spawn(FFMPEG, ffmpegArgs);
 
