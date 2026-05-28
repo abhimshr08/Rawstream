@@ -89,6 +89,9 @@ export default function Player({
   // Progress syncing interval
   const syncIntervalRef = useRef(null);
 
+  // Seek Debounce reference
+  const seekTimeoutRef = useRef(null);
+
   // Format Helper
   const formatTime = (seconds) => {
     if (isNaN(seconds) || seconds === Infinity) return '00:00';
@@ -120,7 +123,7 @@ export default function Player({
     if (currentVideo?.service === 'google' && mediaDuration > 0) {
       const currentPos = driveSeekBase + video.currentTime;
       const seekTime = Math.max(0, Math.min(mediaDuration, currentPos + seconds));
-      seekGDriveStream(seekTime);
+      debounceSeekGDrive(seekTime);
     } else {
       const duration = needsTranscode ? mediaDuration : video.duration;
       const currentTime = needsTranscode 
@@ -129,7 +132,7 @@ export default function Player({
       const seekTime = Math.max(0, Math.min(duration || 0, currentTime + seconds));
 
       if (needsTranscode) {
-        seekTranscodedStream(seekTime);
+        debounceSeekTranscoded(seekTime);
       } else {
         video.currentTime = seekTime;
       }
@@ -176,6 +179,25 @@ export default function Player({
       .catch((err) => logDebug(`Playback resume rejected: ${err.message}`));
   };
 
+  // Debounced Seek wrappers to prevent server-side FFmpeg process thrashing
+  const debounceSeekTranscoded = (seconds) => {
+    if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
+    setIsBuffering(true);
+    setLoaderMessage('Preparing seek stream...');
+    seekTimeoutRef.current = setTimeout(() => {
+      seekTranscodedStream(seconds);
+    }, 400);
+  };
+
+  const debounceSeekGDrive = (seconds) => {
+    if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
+    setIsBuffering(true);
+    setLoaderMessage('Preparing seek stream...');
+    seekTimeoutRef.current = setTimeout(() => {
+      seekGDriveStream(seconds);
+    }, 400);
+  };
+
   // Resume playback check
   const checkForResumeProgress = (id) => {
     const item = historyList.find(x => x.id === id);
@@ -200,9 +222,9 @@ export default function Player({
     if (confirm && resumeTime > 0) {
       logDebug(`Resuming playback from: ${formatTime(resumeTime)}`);
       if (currentVideo?.service === 'google') {
-        seekGDriveStream(resumeTime);
+        debounceSeekGDrive(resumeTime);
       } else if (needsTranscode || (selectedQuality && selectedQuality !== 'original')) {
-        seekTranscodedStream(resumeTime);
+        debounceSeekTranscoded(resumeTime);
       } else {
         const video = videoRef.current;
         if (video) video.currentTime = resumeTime;
@@ -459,6 +481,7 @@ export default function Player({
       if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
       if (resumeTimeoutRef.current) clearTimeout(resumeTimeoutRef.current);
       if (visualizerAnimRef.current) cancelAnimationFrame(visualizerAnimRef.current);
+      if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
       clearTorrentPolling();
     };
   }, []);
@@ -621,8 +644,8 @@ export default function Player({
           setVideoMirror={setVideoMirror}
           driveSeekBase={driveSeekBase}
           transcodeStartTime={transcodeStartTime}
-          seekGDriveStream={seekGDriveStream}
-          seekTranscodedStream={seekTranscodedStream}
+          seekGDriveStream={debounceSeekGDrive}
+          seekTranscodedStream={debounceSeekTranscoded}
           isDraggingProgressRef={isDraggingProgressRef}
           addToast={addToast}
           formatTime={formatTime}
