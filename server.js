@@ -27,9 +27,7 @@ const activeTorrents = new Map(); // key: infoHash (lowercased), value: { torren
 
 function getTorrentClient() {
   if (!torrentClient) {
-    torrentClient = new WebTorrent({
-      maxConns: 25 // Limit connections per torrent to prevent resource/OOM exhaustion on low-spec containers
-    });
+    torrentClient = new WebTorrent();
     torrentClient.on('error', (err) => {
       console.error('[WebTorrent Client Error]:', err.message);
     });
@@ -148,12 +146,12 @@ async function addTorrent(torrentSource) {
 
     setTimeout(() => {
       if (!torrent.ready) {
-        console.log('[TorrentManager] Metadata timeout.');
+        console.log('[TorrentManager] Metadata timeout after 90s.');
         if (torrent.infoHash) activeTorrents.delete(torrent.infoHash.toLowerCase());
         torrent.destroy();
         reject(new Error('Metadata resolution timeout (no peers or slow connection)'));
       }
-    }, 30000);
+    }, 90000); // 90 seconds — enough time for peers to respond on slow/sparse torrents
   });
 }
 
