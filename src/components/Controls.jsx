@@ -27,7 +27,11 @@ export default function Controls({
   seekTranscodedStream,
   isDraggingProgressRef,
   addToast,
-  formatTime
+  formatTime,
+  isFullscreen,
+  toggleFullscreen,
+  isTheater,
+  toggleTheater
 }) {
   // Volume state
   const [volume, setVolume] = useState(1);
@@ -434,7 +438,7 @@ export default function Controls({
               <Subtitles />
             </button>
             {showSubtitlesMenu && (
-              <ul className="custom-dropdown-menu" id="subtitles-menu" style={{ width: '220px', bottom: '40px' }}>
+              <ul className="dropdown-menu" id="subtitles-menu" style={{ width: '220px', bottom: '40px' }}>
                 <li className={activeSubtitle === 'off' ? 'active' : ''} onClick={() => toggleSubtitleTrack('off')}>
                   Off
                 </li>
@@ -486,7 +490,7 @@ export default function Controls({
               <Settings />
             </button>
             {showQualityMenu && (
-              <ul className="custom-dropdown-menu" id="quality-menu">
+              <ul className="dropdown-menu" id="quality-menu">
                 <li className={selectedQuality === 'original' ? 'active' : ''} onClick={() => handleQualitySelect('original')}>Original/Auto</li>
                 <li className={selectedQuality === '720p' ? 'active' : ''} onClick={() => handleQualitySelect('720p')}>720p (HD)</li>
                 <li className={selectedQuality === '480p' ? 'active' : ''} onClick={() => handleQualitySelect('480p')}>480p (SD)</li>
@@ -500,7 +504,7 @@ export default function Controls({
               <span>{speed === 1 ? '1.0' : speed}x</span>
             </button>
             {showSpeedMenu && (
-              <ul className="custom-dropdown-menu" id="speed-menu">
+              <ul className="dropdown-menu" id="speed-menu">
                 {[0.5, 0.75, 1.0, 1.25, 1.5, 2.0].map(val => (
                   <li 
                     key={val} 
@@ -520,7 +524,7 @@ export default function Controls({
               <Sliders />
             </button>
             {showAspectMenu && (
-              <ul className="custom-dropdown-menu" id="aspect-orient-menu" style={{ width: '180px', bottom: '40px' }}>
+              <ul className="dropdown-menu aspect-orient-menu" id="aspect-orient-menu">
                 <li style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', cursor: 'default', padding: '4px 12px' }}>Rotate</li>
                 <li className={videoRotation === 0 ? 'active' : ''} onClick={() => handleAspectAction('rotate', 0)}>0°</li>
                 <li className={videoRotation === 90 ? 'active' : ''} onClick={() => handleAspectAction('rotate', 90)}>90°</li>
@@ -541,6 +545,39 @@ export default function Controls({
               </ul>
             )}
           </div>
+
+          {/* Theater Mode */}
+          <button 
+            id="theater-btn" 
+            className={`control-btn ${isTheater ? 'active' : ''}`}
+            title="Theater Mode" 
+            onClick={toggleTheater}
+            aria-label="Toggle Theater Mode"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} style={{ width: '20px', height: '20px' }}>
+              <rect x="2" y="4" width="20" height="16" rx="2" />
+              <rect x="5" y="7" width="14" height="10" rx="1" />
+            </svg>
+          </button>
+
+          {/* Fullscreen */}
+          <button 
+            id="fullscreen-btn" 
+            className="control-btn" 
+            title="Fullscreen" 
+            onClick={toggleFullscreen}
+            aria-label="Toggle Fullscreen"
+          >
+            {isFullscreen ? (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} style={{ width: '20px', height: '20px' }}>
+                <path d="M4 14h6v6m10-6h-6v6M4 10h6V4m10 6h-6V4" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} style={{ width: '20px', height: '20px' }}>
+                <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
+              </svg>
+            )}
+          </button>
         </div>
       </div>
     </div>

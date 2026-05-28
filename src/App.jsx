@@ -28,6 +28,8 @@ export default function App() {
   const [showDebug, setShowDebug] = useState(false);
   const [debugLogs, setDebugLogs] = useState('[App started. Awaiting video stream...]');
   const [dragOver, setDragOver] = useState(false);
+  const [playerLoading, setPlayerLoading] = useState(false);
+  const [playerLoaderMessage, setPlayerLoaderMessage] = useState('');
 
   // Toast Stack Notifications
   const [toasts, setToasts] = useState([]);
@@ -38,7 +40,7 @@ export default function App() {
   const [detectedService, setDetectedService] = useState('unknown'); // 'google', 'onedrive', 'torrent', 'local', 'unknown'
   const [currentVideo, setCurrentVideo] = useState(null);
   
-  // Transcoding State
+  // Transco  // Loading Streams
   const [mediaDuration, setMediaDuration] = useState(0);
   const [needsTranscode, setNeedsTranscode] = useState(false);
   const [vcodec, setVcodec] = useState('');
@@ -301,6 +303,8 @@ export default function App() {
       return;
     }
 
+    setPlayerLoading(true);
+    setPlayerLoaderMessage('Analyzing media stream...');
     logDebug(`Analyzing media stream for service: ${service}...`);
     let fileId = '';
     let streamUrl = '';
@@ -309,9 +313,11 @@ export default function App() {
       const parsed = parseGoogleDriveLink(url);
       if (!parsed) {
         addToast('Error: Could not extract Google Drive file ID.', 'error');
+        setPlayerLoading(false);
         return;
       }
       fileId = parsed.id;
+      setPlayerLoaderMessage('Resolving Google Drive stream...');
       logDebug(`Resolving Google Drive stream: ${fileId}`);
       try {
         const resolveRes = await authenticatedFetch(`/api/resolve?fileId=${encodeURIComponent(fileId)}`);
@@ -351,10 +357,12 @@ export default function App() {
           timestamp: Date.now()
         };
         setCurrentVideo(videoObj);
+        setPlayerLoading(false);
         addToHistory(videoObj);
       } catch (err) {
         logDebug(`Google Drive stream resolution failed: ${err.message}`);
         addToast('Google Drive stream failed to resolve.', 'error');
+        setPlayerLoading(false);
       }
     } else {
       if (service === 'local') {
@@ -364,15 +372,18 @@ export default function App() {
         const parsed = parseOneDriveLink(url);
         if (!parsed) {
           addToast('Error: Could not parse OneDrive link.', 'error');
+          setPlayerLoading(false);
           return;
         }
         fileId = parsed.id;
         streamUrl = parsed.streamUrl;
       } else {
         addToast('Error: Unsupported media link.', 'error');
+        setPlayerLoading(false);
         return;
       }
 
+      setPlayerLoaderMessage('Probing format details...');
       logDebug(`Probing format: ${streamUrl}`);
       let resolvedDur = 0;
       let resolvedTranscode = false;
@@ -413,11 +424,14 @@ export default function App() {
         timestamp: Date.now()
       };
       setCurrentVideo(videoObj);
+      setPlayerLoading(false);
       addToHistory(videoObj);
     }
   };
 
   const loadTorrent = async (torrentSource) => {
+    setPlayerLoading(true);
+    setPlayerLoaderMessage('Connecting to WebTorrent cache...');
     logDebug('Connecting to WebTorrent cache...');
     try {
       let res;
@@ -435,6 +449,7 @@ export default function App() {
       if (!res.ok || info.error) throw new Error(info.error || 'Torrent failed');
 
       logDebug(`Torrent loaded: "${info.name}" (${info.files.length} files)`);
+      setPlayerLoaderMessage('Selecting playable video file...');
 
       const videoFile = info.files.find(f => {
         const name = f.name.toLowerCase();
@@ -445,10 +460,12 @@ export default function App() {
 
       if (!videoFile) {
         addToast('No playable video file found in torrent.', 'error');
+        setPlayerLoading(false);
         return;
       }
 
       logDebug(`Selected file: "${videoFile.name}" (${(videoFile.length / 1024 / 1024).toFixed(1)} MB)`);
+      setPlayerLoaderMessage('Probing torrent media formats...');
       
       const streamUrl = `/api/torrent/stream?infoHash=${encodeURIComponent(info.infoHash)}&fileIndex=${videoFile.index}`;
       
@@ -491,11 +508,13 @@ export default function App() {
         timestamp: Date.now()
       };
       setCurrentVideo(videoObj);
+      setPlayerLoading(false);
       addToHistory(videoObj);
       startTorrentStats(info.infoHash);
     } catch (err) {
       logDebug(`Torrent load failed: ${err.message}`);
       addToast('WebTorrent connection error.', 'error');
+      setPlayerLoading(false);
     }
   };
 
@@ -565,41 +584,43 @@ export default function App() {
       </div>
 
       {/* Header */}
-      <header className="app-header">
-        <div className="header-logo">
-          <svg className="logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
-            <polygon points="10 11 16 14 10 17 10 11"></polygon>
-          </svg>
-          <h1>Raw<span>Stream</span></h1>
-        </div>
-        <div className="header-actions">
-          {session.token && (
-            <div className="user-profile-badge">
-              <User size={14} style={{ color: 'var(--accent-secondary)', filter: 'drop-shadow(0 0 4px var(--accent-secondary))' }} />
-              <span>{session.username}</span>
-              <button className="logout-btn" title="Log Out" onClick={handleClearSession}>
-                <LogOut size={14} />
-                <span>Log Out</span>
+      <header className="app-header" style={{ padding: '1.25rem 2rem' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', maxWidth: '1800px', margin: '0 auto' }}>
+          <div className="header-logo">
+            <svg className="logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+              <polygon points="10 11 16 14 10 17 10 11"></polygon>
+            </svg>
+            <h1>Raw<span>Stream</span></h1>
+          </div>
+          <div className="header-actions">
+            {session.token && (
+              <div className="user-profile-badge">
+                <User size={14} style={{ color: 'var(--accent-secondary)', filter: 'drop-shadow(0 0 4px var(--accent-secondary))' }} />
+                <span>{session.username}</span>
+                <button className="logout-btn" title="Log Out" onClick={handleClearSession}>
+                  <LogOut size={14} />
+                  <span>Log Out</span>
+                </button>
+              </div>
+            )}
+            {session.isAdmin && (
+              <button className="header-btn" title="Admin Dashboard" onClick={() => setShowAdmin(true)}>
+                <HardDrive size={16} />
+                <span>Admin</span>
               </button>
-            </div>
-          )}
-          {session.isAdmin && (
-            <button className="header-btn" title="Admin Dashboard" onClick={() => setShowAdmin(true)}>
-              <HardDrive size={16} />
-              <span>Admin</span>
+            )}
+            {session.isAdmin && (
+              <button className={`header-btn ${showDebug ? 'active' : ''}`} title="Toggle Debug Logs" onClick={() => setShowDebug(!showDebug)}>
+                <FileText size={16} />
+                <span>Debug</span>
+              </button>
+            )}
+            <button className="header-btn" title="Toggle Stream History" onClick={() => setShowHistory(!showHistory)}>
+              <Info size={16} />
+              <span>History</span>
             </button>
-          )}
-          {session.isAdmin && (
-            <button className={`header-btn ${showDebug ? 'active' : ''}`} title="Toggle Debug Logs" onClick={() => setShowDebug(!showDebug)}>
-              <FileText size={16} />
-              <span>Debug</span>
-            </button>
-          )}
-          <button className="header-btn" title="Toggle Stream History" onClick={() => setShowHistory(!showHistory)}>
-            <Info size={16} />
-            <span>History</span>
-          </button>
+          </div>
         </div>
       </header>
 
@@ -671,6 +692,8 @@ export default function App() {
             authenticatedFetch={authenticatedFetch}
             addToast={addToast}
             logDebug={logDebug}
+            playerLoading={playerLoading}
+            playerLoaderMessage={playerLoaderMessage}
           />
 
           {/* Torrent downloading status details card */}

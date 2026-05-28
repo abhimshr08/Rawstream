@@ -15,11 +15,14 @@ export default function Player({
   historyList,
   authenticatedFetch,
   addToast,
-  logDebug
+  logDebug,
+  playerLoading,
+  playerLoaderMessage
 }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const visualizerRef = useRef(null);
+  const playerRef = useRef(null);
 
   // Player State
   const [isPlaying, setIsPlaying] = useState(false);
@@ -27,6 +30,36 @@ export default function Player({
   const [loaderMessage, setLoaderMessage] = useState('');
   const [showPlaceholder, setShowPlaceholder] = useState(true);
   const [videoError, setVideoError] = useState(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isTheater, setIsTheater] = useState(false);
+
+  // Synchronize native fullscreen changes
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    };
+  }, []);
+
+  const toggleFullscreen = () => {
+    const container = playerRef.current;
+    if (!container) return;
+
+    if (!document.fullscreenElement) {
+      container.requestFullscreen().catch(() => {
+        addToast('Error enabling fullscreen', 'error');
+      });
+    } else {
+      document.exitFullscreen();
+    }
+  };
+
+  const toggleTheater = () => {
+    setIsTheater(prev => !prev);
+  };
 
   // Layout State
   const [videoRotation, setVideoRotation] = useState(0);
@@ -407,7 +440,10 @@ export default function Player({
 
     video.play()
       .then(() => logDebug('Playback autoplay initiated.'))
-      .catch((err) => logDebug(`Autoplay blocked: ${err.message}. Click play to start.`));
+      .catch((err) => {
+        logDebug(`Autoplay blocked: ${err.message}. Click play to start.`);
+        setIsBuffering(false); // clear spinner overlay so user can press play
+      });
 
     return () => {
       video.removeAttribute('src');
@@ -443,8 +479,9 @@ export default function Player({
 
   return (
     <section 
+      ref={playerRef}
       id="player-container" 
-      className="player-container glass-panel aspect-ratio-container"
+      className={`player-container glass-panel aspect-ratio-container ${isTheater ? 'theater' : ''}`}
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
     >
@@ -452,10 +489,10 @@ export default function Player({
       <canvas ref={canvasRef} id="ambient-glow-canvas" className="ambient-glow-canvas" />
 
       {/* Loading Overlay */}
-      {isBuffering && (
+      {(isBuffering || playerLoading) && (
         <div id="player-loader" className="player-loader">
-          <div className="loader-spinner" />
-          <p>{loaderMessage}</p>
+          <div className="spinner" />
+          <p>{playerLoaderMessage || loaderMessage}</p>
         </div>
       )}
 
@@ -484,7 +521,7 @@ export default function Player({
       )}
 
       {/* Player Placeholder Screen */}
-      {showPlaceholder && !videoError && (
+      {showPlaceholder && !videoError && !playerLoading && (
         <div id="player-placeholder" className="player-placeholder">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style={{ width: '64px', height: '64px', marginBottom: '1rem', color: 'rgba(255,255,255,0.3)' }}>
             <polygon points="23 7 16 12 23 17 23 7" />
@@ -589,6 +626,10 @@ export default function Player({
           isDraggingProgressRef={isDraggingProgressRef}
           addToast={addToast}
           formatTime={formatTime}
+          isFullscreen={isFullscreen}
+          toggleFullscreen={toggleFullscreen}
+          isTheater={isTheater}
+          toggleTheater={toggleTheater}
         />
       )}
 
