@@ -17,7 +17,8 @@ export default function Player({
   addToast,
   logDebug,
   playerLoading,
-  playerLoaderMessage
+  playerLoaderMessage,
+  onRecoverTorrent
 }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -91,6 +92,10 @@ export default function Player({
 
   // Seek Debounce reference
   const seekTimeoutRef = useRef(null);
+
+  // Torrent Recovery tracking refs
+  const recoveryAttemptsRef = useRef(0);
+  const recoveryTimeRef = useRef(0);
 
   // Format Helper
   const formatTime = (seconds) => {
@@ -358,6 +363,22 @@ export default function Player({
     const video = videoRef.current;
     if (!video) return;
 
+    // Torrent Auto-Recovery mechanism
+    if (currentVideo?.service === 'torrent' && recoveryAttemptsRef.current < 1 && onRecoverTorrent) {
+      let displayTime = video.currentTime;
+      if (needsTranscode) {
+        displayTime = transcodeStartTime + video.currentTime;
+      }
+      
+      recoveryAttemptsRef.current += 1;
+      recoveryTimeRef.current = !isNaN(displayTime) && displayTime > 0 ? displayTime : 0;
+
+      logDebug(`[Recovery] Torrent playback failed. Auto-recovering torrent cache on server at timestamp ${formatTime(recoveryTimeRef.current)}...`);
+      addToast('Reconnecting to torrent cache...', 'info');
+      onRecoverTorrent(currentVideo.originalUrl);
+      return;
+    }
+
     const proxiedUrl = video.src;
     logDebug(`Video loading failed. URL: ${proxiedUrl}`);
 
@@ -453,19 +474,40 @@ export default function Player({
     setDriveSeekBase(0);
     setTranscodeStartTime(0);
 
-    video.src = currentVideo.streamUrl;
-    video.load();
-    setIsBuffering(true);
-    setLoaderMessage('Buffering stream...');
+    // Check if we are recovering from a previous state
+    const autoSeekTime = recoveryTimeRef.current;
+    recoveryTimeRef.current = 0; // reset
 
-    checkForResumeProgress(currentVideo.id);
+    if (autoSeekTime > 0) {
+      logDebug(`[Recovery] Auto-seeking recovered stream directly to: ${formatTime(autoSeekTime)}`);
+      if (currentVideo.service === 'google') {
+        seekGDriveStream(autoSeekTime);
+      } else if (needsTranscode || (selectedQuality && selectedQuality !== 'original')) {
+        seekTranscodedStream(autoSeekTime);
+      } else {
+        video.src = currentVideo.streamUrl;
+        video.load();
+        video.currentTime = autoSeekTime;
+        video.play()
+          .then(() => logDebug('[Recovery] Resumed direct playback.'))
+          .catch((err) => logDebug(`[Recovery] Resume direct play blocked: ${err.message}`));
+      }
+    } else {
+      recoveryAttemptsRef.current = 0;
+      video.src = currentVideo.streamUrl;
+      video.load();
+      setIsBuffering(true);
+      setLoaderMessage('Buffering stream...');
 
-    video.play()
-      .then(() => logDebug('Playback autoplay initiated.'))
-      .catch((err) => {
-        logDebug(`Autoplay blocked: ${err.message}. Click play to start.`);
-        setIsBuffering(false); // clear spinner overlay so user can press play
-      });
+      checkForResumeProgress(currentVideo.id);
+
+      video.play()
+        .then(() => logDebug('Playback autoplay initiated.'))
+        .catch((err) => {
+          logDebug(`Autoplay blocked: ${err.message}. Click play to start.`);
+          setIsBuffering(false); // clear spinner overlay so user can press play
+        });
+    }
 
     return () => {
       video.removeAttribute('src');

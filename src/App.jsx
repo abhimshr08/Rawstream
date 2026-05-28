@@ -314,6 +314,7 @@ export default function App() {
       if (!parsed) {
         addToast('Error: Could not extract Google Drive file ID.', 'error');
         setPlayerLoading(false);
+        setPlayerLoaderMessage('');
         return;
       }
       fileId = parsed.id;
@@ -358,11 +359,13 @@ export default function App() {
         };
         setCurrentVideo(videoObj);
         setPlayerLoading(false);
+        setPlayerLoaderMessage('');
         addToHistory(videoObj);
       } catch (err) {
         logDebug(`Google Drive stream resolution failed: ${err.message}`);
         addToast('Google Drive stream failed to resolve.', 'error');
         setPlayerLoading(false);
+        setPlayerLoaderMessage('');
       }
     } else {
       if (service === 'local') {
@@ -373,6 +376,7 @@ export default function App() {
         if (!parsed) {
           addToast('Error: Could not parse OneDrive link.', 'error');
           setPlayerLoading(false);
+          setPlayerLoaderMessage('');
           return;
         }
         fileId = parsed.id;
@@ -380,6 +384,7 @@ export default function App() {
       } else {
         addToast('Error: Unsupported media link.', 'error');
         setPlayerLoading(false);
+        setPlayerLoaderMessage('');
         return;
       }
 
@@ -425,6 +430,7 @@ export default function App() {
       };
       setCurrentVideo(videoObj);
       setPlayerLoading(false);
+      setPlayerLoaderMessage('');
       addToHistory(videoObj);
     }
   };
@@ -461,6 +467,7 @@ export default function App() {
       if (!videoFile) {
         addToast('No playable video file found in torrent.', 'error');
         setPlayerLoading(false);
+        setPlayerLoaderMessage('');
         return;
       }
 
@@ -509,12 +516,14 @@ export default function App() {
       };
       setCurrentVideo(videoObj);
       setPlayerLoading(false);
+      setPlayerLoaderMessage('');
       addToHistory(videoObj);
       startTorrentStats(info.infoHash);
     } catch (err) {
       logDebug(`Torrent load failed: ${err.message}`);
       addToast('WebTorrent connection error.', 'error');
       setPlayerLoading(false);
+      setPlayerLoaderMessage('');
     }
   };
 
@@ -694,6 +703,7 @@ export default function App() {
             logDebug={logDebug}
             playerLoading={playerLoading}
             playerLoaderMessage={playerLoaderMessage}
+            onRecoverTorrent={loadTorrent}
           />
 
           {/* Torrent downloading status details card */}

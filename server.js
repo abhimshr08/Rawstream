@@ -27,7 +27,9 @@ const activeTorrents = new Map(); // key: infoHash (lowercased), value: { torren
 
 function getTorrentClient() {
   if (!torrentClient) {
-    torrentClient = new WebTorrent();
+    torrentClient = new WebTorrent({
+      maxConns: 25 // Limit connections per torrent to prevent resource/OOM exhaustion on low-spec containers
+    });
     torrentClient.on('error', (err) => {
       console.error('[WebTorrent Client Error]:', err.message);
     });
@@ -123,6 +125,18 @@ async function addTorrent(torrentSource) {
 
     torrent.once('ready', () => {
       console.log(`[TorrentManager] Torrent ready: ${torrent.name}`);
+      
+      // Deselect all pieces by default to prevent downloading the entire file in the background.
+      // WebTorrent will still download pieces on-demand when file.createReadStream() is called.
+      if (typeof torrent.deselect === 'function' && torrent.pieces) {
+        try {
+          torrent.deselect(0, torrent.pieces.length - 1, 1);
+          console.log(`[TorrentManager] Deselected all pieces to preserve container disk/memory.`);
+        } catch (e) {
+          console.error('[TorrentManager] Failed to deselect pieces:', e.message);
+        }
+      }
+
       resolve(torrent);
     });
 
