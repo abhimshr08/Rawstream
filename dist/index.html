@@ -13,8 +13,8 @@
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   
   <!-- Custom Styles -->
-  <script type="module" crossorigin src="/assets/index-BddBQ0oq.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-CtI32NRi.css">
+  <script type="module" crossorigin src="/assets/index-CvjklLQs.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-DTrsY1No.css">
 </head>
 <body>
   <div class="app-container">
@@ -49,6 +49,12 @@
             <line x1="9" y1="15" x2="21" y2="15"></line>
           </svg>
           <span>Admin</span>
+        </button>
+        <button id="toggle-debug-btn" class="header-btn" title="Toggle Debug Logs" aria-expanded="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+          </svg>
+          <span>Debug</span>
         </button>
         <button id="toggle-history-btn" class="header-btn" title="Toggle Stream History" aria-expanded="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -122,6 +128,24 @@
 
         <!-- Video Player Section -->
         <section id="player-container" class="player-container glass-panel aspect-ratio-container">
+          <!-- Ambient Cinema Glow Canvas -->
+          <canvas id="ambient-glow-canvas" class="ambient-glow-canvas"></canvas>
+
+          <!-- Resume Playback Prompt -->
+          <div id="resume-prompt" class="resume-prompt hidden">
+            <div class="resume-prompt-content glass-panel">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 20px; height: 20px; color: var(--accent-primary);">
+                <circle cx="12" cy="12" r="10"></circle>
+                <polyline points="12 6 12 12 16 14"></polyline>
+              </svg>
+              <span>Resume playback from <strong id="resume-time-display">00:00</strong>?</span>
+              <div class="resume-prompt-actions">
+                <button id="resume-yes-btn" class="resume-btn yes">Resume</button>
+                <button id="resume-no-btn" class="resume-btn no">Start Over</button>
+              </div>
+            </div>
+          </div>
+
           <!-- Video Element -->
           <video id="video-element" preload="metadata" playsinline referrerpolicy="no-referrer">
             <!-- Source dynamically set by JS -->
@@ -245,6 +269,48 @@
                   </ul>
                 </div>
 
+                <!-- Quality Settings -->
+                <div class="dropdown-wrapper">
+                  <button id="quality-btn" class="control-btn" title="Stream Quality" aria-label="Stream Quality Settings" aria-haspopup="listbox">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+                      <polyline points="2 17 12 22 22 17"></polyline>
+                      <polyline points="2 12 12 17 22 12"></polyline>
+                    </svg>
+                  </button>
+                  <ul id="quality-menu" class="dropdown-menu hidden" role="listbox" aria-label="Stream Quality Options">
+                    <li data-quality="original" role="option" class="active">Auto / Original</li>
+                    <li data-quality="720p" role="option">Transcode: 720p</li>
+                    <li data-quality="480p" role="option">Transcode: 480p</li>
+                  </ul>
+                </div>
+
+                <!-- Subtitles Settings -->
+                <div class="dropdown-wrapper">
+                  <button id="subtitles-btn" class="control-btn" title="Subtitles & Captions" aria-label="Subtitles Settings" aria-haspopup="listbox">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                      <path d="M10 8h4M9 12h6"></path>
+                    </svg>
+                  </button>
+                  <ul id="subtitles-menu" class="dropdown-menu hidden" style="width: 220px;" role="listbox" aria-label="Subtitles Options">
+                    <li class="menu-section-header">Tracks</li>
+                    <li id="subtitles-toggle-off" class="active" role="option">Off</li>
+                    <li class="menu-divider" style="height: 1px; background: rgba(255,255,255,0.05); margin: 0.25rem 0;"></li>
+                    <li class="menu-section-header">Custom Subtitle</li>
+                    <li style="padding: 0.5rem 1rem;">
+                      <label for="subtitles-file-input" style="display: block; cursor: pointer; color: var(--accent-primary); font-weight: 500; font-size: 0.75rem;">
+                        📤 Upload .srt / .vtt file
+                      </label>
+                      <input type="file" id="subtitles-file-input" accept=".srt,.vtt" class="hidden">
+                    </li>
+                    <li style="padding: 0.5rem 1rem; display: flex; gap: 0.25rem; align-items: center;">
+                      <input type="text" id="subtitles-url-input" placeholder="Or VTT URL..." style="flex: 1; min-width: 0; background: rgba(0,0,0,0.5); border: 1px solid var(--glass-border); border-radius: 4px; padding: 0.25rem; font-size: 0.75rem; color: white; outline: none;">
+                      <button id="subtitles-url-btn" class="clear-all-btn" style="padding: 0.25rem 0.5rem; font-size: 0.7rem; background: rgba(99,102,241,0.2);">Load</button>
+                    </li>
+                  </ul>
+                </div>
+
                 <!-- Theater Mode -->
                 <button id="theater-btn" class="control-btn" title="Theater Mode" aria-label="Toggle Theater Mode">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -348,7 +414,7 @@
         </section>
 
         <!-- System Debug Logs Card -->
-        <section id="debug-card" class="instructions-card glass-panel" style="margin-top: 1.5rem;">
+        <section id="debug-card" class="instructions-card glass-panel hidden" style="margin-top: 1.5rem;">
           <h3 style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
             <span style="display: flex; align-items: center; gap: 0.5rem;">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 18px; height: 18px; color: var(--accent-secondary);">

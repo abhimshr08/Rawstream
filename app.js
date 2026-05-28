@@ -79,8 +79,10 @@ class CloudStreamApp {
       notificationMessage: document.getElementById('notification-message'),
       
       // Live Debug Log
+      debugCard: document.getElementById('debug-card'),
       debugLogs: document.getElementById('debug-logs'),
       clearDebugBtn: document.getElementById('clear-debug-btn'),
+      toggleDebugBtn: document.getElementById('toggle-debug-btn'),
 
       // Auth DOM Elements
       authOverlay: document.getElementById('auth-overlay'),
@@ -117,7 +119,22 @@ class CloudStreamApp {
       sysPlatform: document.getElementById('sys-platform'),
       sysRelease: document.getElementById('sys-release'),
       sysRamUsage: document.getElementById('sys-ram-usage'),
-      sysProcessUptime: document.getElementById('sys-process-uptime')
+      sysProcessUptime: document.getElementById('sys-process-uptime'),
+
+      // Premium features DOM elements
+      ambientGlowCanvas: document.getElementById('ambient-glow-canvas'),
+      resumePrompt: document.getElementById('resume-prompt'),
+      resumeTimeDisplay: document.getElementById('resume-time-display'),
+      resumeYesBtn: document.getElementById('resume-yes-btn'),
+      resumeNoBtn: document.getElementById('resume-no-btn'),
+      qualityBtn: document.getElementById('quality-btn'),
+      qualityMenu: document.getElementById('quality-menu'),
+      subtitlesBtn: document.getElementById('subtitles-btn'),
+      subtitlesMenu: document.getElementById('subtitles-menu'),
+      subtitlesFileInput: document.getElementById('subtitles-file-input'),
+      subtitlesUrlInput: document.getElementById('subtitles-url-input'),
+      subtitlesUrlBtn: document.getElementById('subtitles-url-btn'),
+      subtitlesToggleOff: document.getElementById('subtitles-toggle-off')
     };
 
     this.originalPlaceholderHtml = this.dom.playerPlaceholder.innerHTML;
@@ -128,6 +145,12 @@ class CloudStreamApp {
       token: localStorage.getItem('rawstream_session_token') || null,
       isAdmin: localStorage.getItem('rawstream_session_is_admin') === 'true'
     };
+
+    // Premium features state
+    this.selectedQuality = 'original';
+    this.ambientInterval = null;
+    this.historySyncTimer = null;
+    this.pendingResumeTime = 0;
 
     this.init();
   }
@@ -140,6 +163,7 @@ class CloudStreamApp {
     this.setupResizeObserver();
     this.checkClipboardPermission();
     this.checkAuth();
+    this.checkDebugUrlParams();
   }
 
   setupEventListeners() {
@@ -196,10 +220,59 @@ class CloudStreamApp {
     this.dom.aspectOrientBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       this.dom.aspectOrientMenu.classList.toggle('hidden');
+      if (this.dom.qualityMenu) this.dom.qualityMenu.classList.add('hidden');
+      if (this.dom.subtitlesMenu) this.dom.subtitlesMenu.classList.add('hidden');
+      this.dom.speedMenu.classList.add('hidden');
     });
+
+    // Quality dropdown toggles
+    if (this.dom.qualityBtn) {
+      this.dom.qualityBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.dom.qualityMenu.classList.toggle('hidden');
+        if (this.dom.subtitlesMenu) this.dom.subtitlesMenu.classList.add('hidden');
+        this.dom.aspectOrientMenu.classList.add('hidden');
+        this.dom.speedMenu.classList.add('hidden');
+      });
+      this.dom.qualityMenu.querySelectorAll('li').forEach(item => {
+        item.addEventListener('click', (e) => this.handleQualityChange(e));
+      });
+    }
+
+    // Subtitles dropdown toggles
+    if (this.dom.subtitlesBtn) {
+      this.dom.subtitlesBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.dom.subtitlesMenu.classList.toggle('hidden');
+        if (this.dom.qualityMenu) this.dom.qualityMenu.classList.add('hidden');
+        this.dom.aspectOrientMenu.classList.add('hidden');
+        this.dom.speedMenu.classList.add('hidden');
+      });
+      this.dom.subtitlesToggleOff.addEventListener('click', (e) => this.toggleSubtitles(false, e));
+    }
+
+    // Document click to close all dropdowns
     document.addEventListener('click', () => {
       this.dom.aspectOrientMenu.classList.add('hidden');
+      if (this.dom.qualityMenu) this.dom.qualityMenu.classList.add('hidden');
+      if (this.dom.subtitlesMenu) this.dom.subtitlesMenu.classList.add('hidden');
     });
+
+    // Subtitles file and url load listeners
+    if (this.dom.subtitlesFileInput) {
+      this.dom.subtitlesFileInput.addEventListener('change', (e) => this.handleSubtitleUpload(e));
+    }
+    if (this.dom.subtitlesUrlBtn) {
+      this.dom.subtitlesUrlBtn.addEventListener('click', () => this.handleSubtitleUrlLoad());
+    }
+
+    // Resume playback button listeners
+    if (this.dom.resumeYesBtn) {
+      this.dom.resumeYesBtn.addEventListener('click', () => this.resumePlaybackConfirmed(true));
+    }
+    if (this.dom.resumeNoBtn) {
+      this.dom.resumeNoBtn.addEventListener('click', () => this.resumePlaybackConfirmed(false));
+    }
     this.dom.aspectOrientMenu.querySelectorAll('li[data-action]').forEach(item => {
       item.addEventListener('click', (e) => this.handleAspectOrientChange(e));
     });
@@ -226,6 +299,11 @@ class CloudStreamApp {
       this.dom.clearDebugBtn.addEventListener('click', () => {
         if (this.dom.debugLogs) this.dom.debugLogs.innerHTML = '[Logs cleared]';
       });
+    }
+
+    // Debug toggle button
+    if (this.dom.toggleDebugBtn) {
+      this.dom.toggleDebugBtn.addEventListener('click', () => this.toggleDebugLogs());
     }
 
     // Detailed Video Debug Event Logging
@@ -530,6 +608,7 @@ class CloudStreamApp {
         this.transcodeStartTime = 0;
       }
 
+      const rawStreamUrl = streamUrl;
       if (this.needsTranscode) {
         streamUrl = `/api/stream?url=${encodeURIComponent(streamUrl)}&transcode=true&vcodec=${encodeURIComponent(this.vcodec)}&acodec=${encodeURIComponent(this.acodec)}`;
         this.logDebug('Video requires transcoding/remuxing. Spawning ffmpeg source.');
@@ -564,9 +643,30 @@ class CloudStreamApp {
       title: autoTitle,
       originalUrl: url,
       streamUrl,
+      rawStreamUrl: typeof rawStreamUrl === 'string' ? rawStreamUrl : streamUrl,
       service,
       timestamp: Date.now()
     };
+
+    // Reset quality states
+    this.selectedQuality = 'original';
+    if (this.dom.qualityMenu) {
+      this.dom.qualityMenu.querySelectorAll('li').forEach(li => {
+        if (li.getAttribute('data-quality') === 'original') li.classList.add('active');
+        else li.classList.remove('active');
+      });
+    }
+
+    // Clear custom subtitle tracks
+    const tracks = this.dom.video.querySelectorAll('track');
+    tracks.forEach(track => track.remove());
+    if (this.dom.subtitlesMenu) {
+      const customItems = this.dom.subtitlesMenu.querySelectorAll('.dynamic-subtitle-track');
+      customItems.forEach(item => item.remove());
+      this.dom.subtitlesToggleOff.classList.add('active');
+    }
+
+    this.checkForResumeProgress(id);
 
     this.dom.video.play()
       .then(() => {
@@ -655,6 +755,14 @@ class CloudStreamApp {
     this.dom.playBtn.querySelector('.pause-icon').classList.remove('hidden');
     this.dom.playOverlay.classList.add('faded');
     this.showControlsWithTimeout();
+
+    // Start progress syncing
+    this.startProgressSync();
+
+    // Start ambient cinema glow
+    if (this.dom.ambientGlowCanvas && !this.ambientInterval) {
+      this.ambientInterval = setInterval(() => this.updateAmbientGlow(), 100);
+    }
   }
 
   onPause() {
@@ -662,6 +770,18 @@ class CloudStreamApp {
     this.dom.playBtn.querySelector('.pause-icon').classList.add('hidden');
     this.dom.playOverlay.classList.remove('faded');
     this.showControls();
+
+    // Stop progress syncing
+    if (this.historySyncTimer) {
+      clearInterval(this.historySyncTimer);
+      this.historySyncTimer = null;
+    }
+
+    // Stop ambient cinema glow
+    if (this.ambientInterval) {
+      clearInterval(this.ambientInterval);
+      this.ambientInterval = null;
+    }
   }
 
   onTimeUpdate() {
@@ -1042,8 +1162,8 @@ class CloudStreamApp {
     this.showLoader(true);
 
     this.transcodeStartTime = seconds;
-    const streamUrl = this.currentVideo.streamUrl;
-    const proxiedUrl = `/api/stream?url=${encodeURIComponent(streamUrl)}&transcode=true&vcodec=${encodeURIComponent(this.vcodec)}&acodec=${encodeURIComponent(this.acodec)}&start=${Math.floor(seconds)}`;
+    const rawUrl = this.currentVideo.rawStreamUrl || this.currentVideo.streamUrl;
+    const proxiedUrl = `/api/stream?url=${encodeURIComponent(rawUrl)}&transcode=true&vcodec=${encodeURIComponent(this.vcodec)}&acodec=${encodeURIComponent(this.acodec)}&start=${Math.floor(seconds)}`;
 
     this.dom.video.src = proxiedUrl;
     this.dom.video.load();
@@ -1164,6 +1284,35 @@ class CloudStreamApp {
       } catch (e) {
         console.error('Failed to clear history:', e);
       }
+    }
+  }
+
+  toggleDebugLogs(force = null) {
+    if (!this.dom.debugCard) return;
+    
+    const show = force !== null ? force : this.dom.debugCard.classList.contains('hidden');
+    
+    if (show) {
+      this.dom.debugCard.classList.remove('hidden');
+      if (this.dom.toggleDebugBtn) {
+        this.dom.toggleDebugBtn.setAttribute('aria-expanded', 'true');
+        this.dom.toggleDebugBtn.classList.add('active');
+      }
+    } else {
+      this.dom.debugCard.classList.add('hidden');
+      if (this.dom.toggleDebugBtn) {
+        this.dom.toggleDebugBtn.setAttribute('aria-expanded', 'false');
+        this.dom.toggleDebugBtn.classList.remove('active');
+      }
+    }
+  }
+
+  checkDebugUrlParams() {
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.has('debug') || urlParams.get('debug') === 'true') {
+      this.toggleDebugLogs(true);
+    } else {
+      this.toggleDebugLogs(false);
     }
   }
 
@@ -1965,9 +2114,30 @@ class CloudStreamApp {
         ? torrentSource
         : `magnet:?xt=urn:btih:${infoHash}`,
       streamUrl: finalStreamUrl,
+      rawStreamUrl: streamUrl,
       service: 'torrent',
       timestamp: Date.now()
     };
+
+    // Reset quality states
+    this.selectedQuality = 'original';
+    if (this.dom.qualityMenu) {
+      this.dom.qualityMenu.querySelectorAll('li').forEach(li => {
+        if (li.getAttribute('data-quality') === 'original') li.classList.add('active');
+        else li.classList.remove('active');
+      });
+    }
+
+    // Clear custom subtitle tracks
+    const tracks = this.dom.video.querySelectorAll('track');
+    tracks.forEach(track => track.remove());
+    if (this.dom.subtitlesMenu) {
+      const customItems = this.dom.subtitlesMenu.querySelectorAll('.dynamic-subtitle-track');
+      customItems.forEach(item => item.remove());
+      this.dom.subtitlesToggleOff.classList.add('active');
+    }
+
+    this.checkForResumeProgress(infoHash);
 
     this.addToHistory(this.currentVideo);
 
@@ -2021,6 +2191,309 @@ class CloudStreamApp {
     this.dom.debugLogs.innerHTML += `<br>[${time}] ${msg}`;
     this.dom.debugLogs.scrollTop = this.dom.debugLogs.scrollHeight;
     console.log(`[Debug] ${msg}`);
+  }
+
+  // ─── Playback Resume & Syncing ────────────────────────────────────────────────
+  checkForResumeProgress(id) {
+    if (!this.history || this.history.length === 0) return;
+    const item = this.history.find(x => x.id === id);
+    if (item && item.currentTime && item.duration) {
+      const time = item.currentTime;
+      const duration = item.duration;
+      // Only prompt if watched more than 5 seconds and not completed (less than 95%)
+      if (time > 5 && time < duration * 0.95) {
+        this.pendingResumeTime = time;
+        if (this.dom.resumePrompt && this.dom.resumeTimeDisplay) {
+          this.dom.resumeTimeDisplay.textContent = this.formatTime(time);
+          this.dom.resumePrompt.classList.remove('hidden');
+          
+          if (this.resumePromptTimeout) clearTimeout(this.resumePromptTimeout);
+          this.resumePromptTimeout = setTimeout(() => {
+            if (this.dom.resumePrompt) {
+              this.dom.resumePrompt.classList.add('hidden');
+              this.pendingResumeTime = 0;
+            }
+          }, 10000);
+        }
+      }
+    }
+  }
+
+  resumePlaybackConfirmed(confirmed) {
+    if (this.dom.resumePrompt) {
+      this.dom.resumePrompt.classList.add('hidden');
+    }
+    if (this.resumePromptTimeout) {
+      clearTimeout(this.resumePromptTimeout);
+      this.resumePromptTimeout = null;
+    }
+
+    if (confirmed && this.pendingResumeTime > 0) {
+      const seekTime = this.pendingResumeTime;
+      this.logDebug(`Resuming playback from: ${this.formatTime(seekTime)}`);
+      
+      if (this.currentVideo.service === 'google') {
+        this.seekGDriveStream(seekTime);
+      } else if (this.needsTranscode || (this.selectedQuality && this.selectedQuality !== 'original')) {
+        this.seekTranscodedStream(seekTime);
+      } else {
+        this.dom.video.currentTime = seekTime;
+      }
+    }
+    this.pendingResumeTime = 0;
+  }
+
+  startProgressSync() {
+    if (this.historySyncTimer) clearInterval(this.historySyncTimer);
+    
+    this.historySyncTimer = setInterval(() => {
+      this.syncPlaybackProgress();
+    }, 5000);
+  }
+
+  async syncPlaybackProgress() {
+    if (!this.currentVideo || !this.session.token) return;
+    
+    const video = this.dom.video;
+    let displayTime = video.currentTime;
+    if (this.currentVideo.service === 'google' && this.currentDriveFileId) {
+      displayTime = this.driveSeekBase + video.currentTime;
+    } else if (this.needsTranscode) {
+      displayTime = this.transcodeStartTime + video.currentTime;
+    }
+    
+    const duration = this.mediaDuration || video.duration;
+    if (isNaN(displayTime) || isNaN(duration) || duration <= 0) return;
+
+    try {
+      await this.authenticatedFetch(`/api/history/${this.currentVideo.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          currentTime: displayTime,
+          duration: duration
+        })
+      });
+      
+      // Update local history array item
+      const localItem = this.history.find(item => item.id === this.currentVideo.id);
+      if (localItem) {
+        localItem.currentTime = displayTime;
+        localItem.duration = duration;
+      }
+    } catch (e) {
+      console.error('Failed to sync progress:', e);
+    }
+  }
+
+  // ─── Ambient Cinema Glow ─────────────────────────────────────────────────────
+  updateAmbientGlow() {
+    if (!this.dom.ambientGlowCanvas || !this.dom.video) return;
+    const canvas = this.dom.ambientGlowCanvas;
+    const video = this.dom.video;
+
+    // Only draw if video is playing, ready, and has dimensions
+    if (video.paused || video.ended || video.readyState < 2 || video.videoWidth === 0) return;
+
+    try {
+      const ctx = canvas.getContext('2d', { alpha: false });
+      if (canvas.width !== 16 || canvas.height !== 9) {
+        canvas.width = 16;
+        canvas.height = 9;
+      }
+      ctx.drawImage(video, 0, 0, 16, 9);
+    } catch (e) {
+      // Ignore cross-origin canvas errors if they happen on third-party URLs
+    }
+  }
+
+  // ─── Custom Subtitles Loader ────────────────────────────────────────────────
+  handleSubtitleUpload(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      let content = evt.target.result;
+      const isSrt = file.name.endsWith('.srt');
+
+      if (isSrt) {
+        content = this.convertSrtToVtt(content);
+      }
+
+      const blob = new Blob([content], { type: 'text/vtt' });
+      const blobUrl = URL.createObjectURL(blob);
+      this.addSubtitleTrack(blobUrl, file.name);
+      this.showNotification(`Loaded subtitle: ${file.name}`);
+    };
+    reader.readAsText(file);
+  }
+
+  handleSubtitleUrlLoad() {
+    if (!this.dom.subtitlesUrlInput) return;
+    const url = this.dom.subtitlesUrlInput.value.trim();
+    if (!url) {
+      this.showNotification('Please enter a valid subtitle URL.');
+      return;
+    }
+
+    try {
+      const parsed = new URL(url);
+      const label = `Remote VTT (${parsed.hostname})`;
+      this.addSubtitleTrack(url, label);
+      this.dom.subtitlesUrlInput.value = '';
+      this.showNotification('Remote subtitle loaded successfully.');
+    } catch (err) {
+      this.showNotification('Invalid URL format.');
+    }
+  }
+
+  convertSrtToVtt(srtText) {
+    // 1. Ensure WEBVTT at top
+    let vtt = 'WEBVTT\n\n' + srtText;
+    // 2. Replace SRT timestamp comma with VTT dot: 00:00:00,000 -> 00:00:00.000
+    vtt = vtt.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2');
+    return vtt;
+  }
+
+  addSubtitleTrack(src, label) {
+    const track = document.createElement('track');
+    track.kind = 'subtitles';
+    track.label = label;
+    track.srclang = 'en';
+    track.src = src;
+    track.default = true;
+
+    // Remove any previous tracks with the same label
+    const existing = this.dom.video.querySelectorAll('track');
+    existing.forEach(t => {
+      if (t.label === label) t.remove();
+    });
+
+    this.dom.video.appendChild(track);
+
+    // Turn off other tracks, turn on this one
+    setTimeout(() => {
+      const tracks = this.dom.video.textTracks;
+      for (let i = 0; i < tracks.length; i++) {
+        if (tracks[i].label === label) {
+          tracks[i].mode = 'showing';
+        } else {
+          tracks[i].mode = 'disabled';
+        }
+      }
+      this.renderSubtitlesMenu();
+    }, 100);
+  }
+
+  toggleSubtitles(show, e) {
+    if (e) e.stopPropagation();
+    const tracks = this.dom.video.textTracks;
+    for (let i = 0; i < tracks.length; i++) {
+      tracks[i].mode = 'disabled';
+    }
+
+    if (this.dom.subtitlesMenu) {
+      this.dom.subtitlesMenu.querySelectorAll('li').forEach(li => {
+        li.classList.remove('active');
+      });
+      this.dom.subtitlesToggleOff.classList.add('active');
+    }
+    this.showNotification('Subtitles turned off');
+  }
+
+  renderSubtitlesMenu() {
+    if (!this.dom.subtitlesMenu) return;
+
+    // Clear existing dynamic track list items
+    const dynamicItems = this.dom.subtitlesMenu.querySelectorAll('.dynamic-subtitle-track');
+    dynamicItems.forEach(item => item.remove());
+
+    const tracks = this.dom.video.textTracks;
+    const parent = this.dom.subtitlesMenu;
+    const divider = this.dom.subtitlesMenu.querySelector('.menu-divider');
+
+    for (let i = 0; i < tracks.length; i++) {
+      const track = tracks[i];
+      const li = document.createElement('li');
+      li.className = 'dynamic-subtitle-track';
+      if (track.mode === 'showing') {
+        li.classList.add('active');
+        this.dom.subtitlesToggleOff.classList.remove('active');
+      }
+      li.textContent = track.label;
+      li.setAttribute('role', 'option');
+      li.addEventListener('click', (e) => {
+        e.stopPropagation();
+        
+        // Disable all, enable this
+        for (let j = 0; j < tracks.length; j++) {
+          if (tracks[j].label === track.label) {
+            tracks[j].mode = 'showing';
+          } else {
+            tracks[j].mode = 'disabled';
+          }
+        }
+        
+        this.renderSubtitlesMenu();
+        this.showNotification(`Subtitle selected: ${track.label}`);
+      });
+
+      // Insert before the divider
+      parent.insertBefore(li, divider);
+    }
+  }
+
+  // ─── Quality Resolution Presets ──────────────────────────────────────────────
+  handleQualityChange(e) {
+    const li = e.currentTarget;
+    const quality = li.getAttribute('data-quality');
+    if (this.selectedQuality === quality) return;
+
+    this.selectedQuality = quality;
+
+    // Update active class in menu
+    if (this.dom.qualityMenu) {
+      this.dom.qualityMenu.querySelectorAll('li').forEach(item => {
+        if (item.getAttribute('data-quality') === quality) item.classList.add('active');
+        else item.classList.remove('active');
+      });
+    }
+
+    // Get current play position to resume from
+    let currentPos = this.dom.video.currentTime;
+    if (this.currentVideo.service === 'google' && this.currentDriveFileId) {
+      currentPos = this.driveSeekBase + this.dom.video.currentTime;
+    } else if (this.needsTranscode) {
+      currentPos = this.transcodeStartTime + this.dom.video.currentTime;
+    }
+
+    this.logDebug(`Changing resolution to: ${quality} (seeking back to ${this.formatTime(currentPos)})`);
+
+    // Reload stream with selected quality
+    let newSrc = '';
+    const rawUrl = this.currentVideo.rawStreamUrl || this.currentVideo.streamUrl;
+    
+    if (quality === 'original') {
+      if (this.currentVideo.service === 'google') {
+        newSrc = `/api/gdrive-stream?fileId=${encodeURIComponent(this.currentVideo.id)}`;
+      } else if (this.needsTranscode) {
+        newSrc = `/api/stream?url=${encodeURIComponent(rawUrl)}&transcode=true&vcodec=${encodeURIComponent(this.vcodec)}&acodec=${encodeURIComponent(this.acodec)}`;
+      } else {
+        newSrc = `/api/stream?url=${encodeURIComponent(rawUrl)}`;
+      }
+    } else {
+      newSrc = `/api/stream?url=${encodeURIComponent(rawUrl)}&quality=${quality}&transcode=true&vcodec=${encodeURIComponent(this.vcodec)}&acodec=${encodeURIComponent(this.acodec)}`;
+    }
+
+    this.dom.video.src = newSrc;
+    this.dom.video.load();
+
+    if (this.currentVideo.service === 'google' && quality === 'original') {
+      this.seekGDriveStream(currentPos);
+    } else {
+      this.seekTranscodedStream(currentPos);
+    }
   }
 }
 

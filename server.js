@@ -413,22 +413,32 @@ app.get('/api/stream', async (req, res) => {
 
   const ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36';
 
-  if (transcode === 'true') {
+  if (transcode === 'true' || req.query.quality) {
     const startT = start || '0';
     const supportedVideo = ['h264','vp8','vp9','av1'];
     const supportedAudio = ['aac','mp3','opus','vorbis'];
+    const targetQuality = req.query.quality || 'original';
 
-    const vopts = supportedVideo.includes((vcodec || '').toLowerCase())
-      ? ['-c:v','copy']
-      : ['-c:v','libx264','-preset','ultrafast','-tune','zerolatency','-crf','23'];
+    let vopts = [];
+    if (targetQuality === '720p') {
+      vopts = ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-vf', 'scale=-2:720', '-pix_fmt', 'yuv420p', '-b:v', '1500k', '-maxrate', '2000k', '-bufsize', '3000k'];
+    } else if (targetQuality === '480p') {
+      vopts = ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-vf', 'scale=-2:480', '-pix_fmt', 'yuv420p', '-b:v', '800k', '-maxrate', '1200k', '-bufsize', '1800k'];
+    } else {
+      vopts = supportedVideo.includes((vcodec || '').toLowerCase())
+        ? ['-c:v','copy']
+        : ['-c:v','libx264','-preset','ultrafast','-tune','zerolatency','-crf','23', '-pix_fmt', 'yuv420p'];
+    }
 
     const aopts = supportedAudio.includes((acodec || '').toLowerCase())
       ? ['-c:a','copy']
       : ['-c:a','aac','-b:a','192k'];
 
+    const inputArgs = (startT && startT !== '0') ? ['-ss', startT] : [];
+
     const ffArgs = isLocal
-      ? ['-ss', startT, '-i', resolvedUrl, ...vopts, ...aopts, '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moof', '-']
-      : ['-ss', startT, '-headers', `User-Agent: ${ua}\r\n`, '-i', resolvedUrl, ...vopts, ...aopts, '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moof', '-'];
+      ? [...inputArgs, '-i', resolvedUrl, ...vopts, ...aopts, '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moof', '-']
+      : [...inputArgs, '-headers', `User-Agent: ${ua}\r\n`, '-i', resolvedUrl, ...vopts, ...aopts, '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moof', '-'];
 
     const ff = spawn(FFMPEG, ffArgs);
     res.status(200).setHeader('Content-Type', 'video/mp4').setHeader('Cache-Control', 'no-cache');
@@ -1119,10 +1129,10 @@ app.put('/api/history/:id', async (req, res) => {
   try {
     const id = req.params.id;
     const raw = await readRawBody(req);
-    const { title } = JSON.parse(raw.toString() || '{}');
+    const { title, currentTime, duration } = JSON.parse(raw.toString() || '{}');
 
-    if (!title) {
-      res.status(400).json({ error: 'Title is required' });
+    if (title === undefined && currentTime === undefined && duration === undefined) {
+      res.status(400).json({ error: 'At least one field (title, currentTime, duration) is required' });
       return;
     }
 
@@ -1130,7 +1140,9 @@ app.put('/api/history/:id', async (req, res) => {
     const userHistory = histories[username] || [];
     const item = userHistory.find(item => item.id === id);
     if (item) {
-      item.title = title;
+      if (title !== undefined) item.title = title;
+      if (currentTime !== undefined) item.currentTime = currentTime;
+      if (duration !== undefined) item.duration = duration;
       histories[username] = userHistory;
       saveHistories(histories);
     }

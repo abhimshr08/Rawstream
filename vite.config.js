@@ -819,28 +819,39 @@ export default defineConfig({
             }
 
             const transcode = reqUrl.searchParams.get('transcode') === 'true';
+            const qualityParam = reqUrl.searchParams.get('quality');
             const userAgent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
             // --- Case A: Transcode via ffmpeg ---
-            if (transcode) {
+            if (transcode || qualityParam) {
               const start  = reqUrl.searchParams.get('start')  || '0';
               const vcodec = reqUrl.searchParams.get('vcodec') || '';
               const acodec = reqUrl.searchParams.get('acodec') || '';
+              const targetQuality = qualityParam || 'original';
 
               const supportedVideoCodecs = ['h264', 'vp8', 'vp9', 'av1'];
               const supportedAudioCodecs = ['aac', 'mp3', 'opus', 'vorbis'];
 
-              const vopts = supportedVideoCodecs.includes(vcodec.toLowerCase())
-                ? ['-c:v', 'copy']
-                : ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23'];
+              let vopts = [];
+              if (targetQuality === '720p') {
+                vopts = ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-vf', 'scale=-2:720', '-pix_fmt', 'yuv420p', '-b:v', '1500k', '-maxrate', '2000k', '-bufsize', '3000k'];
+              } else if (targetQuality === '480p') {
+                vopts = ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-vf', 'scale=-2:480', '-pix_fmt', 'yuv420p', '-b:v', '800k', '-maxrate', '1200k', '-bufsize', '1800k'];
+              } else {
+                vopts = supportedVideoCodecs.includes(vcodec.toLowerCase())
+                  ? ['-c:v', 'copy']
+                  : ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-pix_fmt', 'yuv420p'];
+              }
 
               const aopts = supportedAudioCodecs.includes(acodec.toLowerCase())
                 ? ['-c:a', 'copy']
                 : ['-c:a', 'aac', '-b:a', '192k'];
 
+              const inputArgs = (start && start !== '0') ? ['-ss', start] : [];
+
               const ffmpegArgs = isLocal
-                ? ['-ss', start, '-i', resolvedUrl, ...vopts, ...aopts, '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moof', '-']
-                : ['-ss', start, '-headers', `User-Agent: ${userAgent}\r\n`, '-i', resolvedUrl, ...vopts, ...aopts, '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moof', '-'];
+                ? [...inputArgs, '-i', resolvedUrl, ...vopts, ...aopts, '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moof', '-']
+                : [...inputArgs, '-headers', `User-Agent: ${userAgent}\r\n`, '-i', resolvedUrl, ...vopts, ...aopts, '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moof', '-'];
 
               const ffmpegProcess = spawn(FFMPEG, ffmpegArgs);
 
@@ -1249,11 +1260,11 @@ export default defineConfig({
             }
             try {
               const raw = await readRawBody(req);
-              const { title } = JSON.parse(raw.toString() || '{}');
+              const { title, currentTime, duration } = JSON.parse(raw.toString() || '{}');
 
-              if (!title) {
+              if (title === undefined && currentTime === undefined && duration === undefined) {
                 res.statusCode = 400;
-                res.end(JSON.stringify({ error: 'Title is required' }));
+                res.end(JSON.stringify({ error: 'At least one field (title, currentTime, duration) is required' }));
                 return;
               }
 
@@ -1261,7 +1272,9 @@ export default defineConfig({
               const userHistory = histories[username] || [];
               const item = userHistory.find(item => item.id === id);
               if (item) {
-                item.title = title;
+                if (title !== undefined) item.title = title;
+                if (currentTime !== undefined) item.currentTime = currentTime;
+                if (duration !== undefined) item.duration = duration;
                 histories[username] = userHistory;
                 saveHistories(histories);
               }
