@@ -833,12 +833,15 @@ export default defineConfig({
               const supportedAudioCodecs = ['aac', 'mp3', 'opus', 'vorbis'];
 
               let vopts = [];
+              const isSeeking = start && start !== '0';
               if (targetQuality === '720p') {
                 vopts = ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-vf', 'scale=-2:720', '-pix_fmt', 'yuv420p', '-b:v', '1500k', '-maxrate', '2000k', '-bufsize', '3000k'];
               } else if (targetQuality === '480p') {
                 vopts = ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-vf', 'scale=-2:480', '-pix_fmt', 'yuv420p', '-b:v', '800k', '-maxrate', '1200k', '-bufsize', '1800k'];
               } else {
-                vopts = supportedVideoCodecs.includes(vcodec.toLowerCase())
+                // Force libx264 transcoding when seeking to align audio/video presentation timestamps accurately.
+                // Copying video (copy) with transcoded audio (aac) during seeks leads to A/V sync drift due to keyframe snapping.
+                vopts = (supportedVideoCodecs.includes(vcodec.toLowerCase()) && !isSeeking)
                   ? ['-c:v', 'copy']
                   : ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-pix_fmt', 'yuv420p'];
               }
