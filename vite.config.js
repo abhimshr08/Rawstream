@@ -26,9 +26,57 @@ if (!fs.existsSync(HISTORY_FILE)) {
   fs.writeFileSync(HISTORY_FILE, JSON.stringify({}));
 }
 
-function hashPassword(password) {
-  return crypto.createHash('sha256').update(password).digest('hex');
+const activeSessions = new Map(); // key: sessionToken, value: { username, isAdmin, loginTime }
+
+function verifyPassword(user, password) {
+  if (user.salt) {
+    const computed = crypto.createHash('sha256').update(password + user.salt).digest('hex');
+    return user.passwordHash === computed;
+  }
+  if (user.password) {
+    // Legacy migration
+    const computedOld = crypto.createHash('sha256').update(password).digest('hex');
+    if (user.password === computedOld) {
+      // Upgrade to salt & passwordHash
+      const salt = crypto.randomBytes(16).toString('hex');
+      const passwordHash = crypto.createHash('sha256').update(password + salt).digest('hex');
+      user.salt = salt;
+      user.passwordHash = passwordHash;
+      delete user.password;
+      const users = getUsers();
+      users[user.username] = user;
+      saveUsers(users);
+      return true;
+    }
+  }
+  return false;
 }
+
+function syncAdminUser() {
+  const adminUsername = (process.env.ADMIN_USERNAME || 'admin').trim();
+  const adminPassword = process.env.ADMIN_PASSWORD;
+  if (!adminPassword) {
+    console.warn('[AdminSync Dev] ADMIN_PASSWORD environment variable not set. Admin user will not be initialized/updated.');
+    return;
+  }
+  
+  const users = getUsers();
+  const salt = crypto.randomBytes(16).toString('hex');
+  const passwordHash = crypto.createHash('sha256').update(adminPassword + salt).digest('hex');
+  
+  users[adminUsername] = {
+    username: adminUsername,
+    salt: salt,
+    passwordHash: passwordHash,
+    isAdmin: true,
+    createdAt: users[adminUsername]?.createdAt || Date.now()
+  };
+  saveUsers(users);
+  console.log(`[AdminSync Dev] Admin user "${adminUsername}" synchronized successfully.`);
+}
+
+// Perform initial sync of admin user
+syncAdminUser();
 
 function getUsers() {
   try {
@@ -50,6 +98,7 @@ function getHistories() {
   }
 }
 
+// Save history helper
 function saveHistories(histories) {
   fs.writeFileSync(HISTORY_FILE, JSON.stringify(histories, null, 2));
 }
@@ -58,14 +107,20 @@ function authenticateToken(req) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
   if (!token) return null;
-  try {
-    const username = Buffer.from(token, 'base64').toString('utf8');
-    const users = getUsers();
-    if (users[username]) {
-      return username;
-    }
-  } catch (e) {
-    return null;
+  const session = activeSessions.get(token);
+  if (session) {
+    return session.username;
+  }
+  return null;
+}
+
+function authenticateAdmin(req) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) return null;
+  const session = activeSessions.get(token);
+  if (session && session.isAdmin) {
+    return session;
   }
   return null;
 }
@@ -866,6 +921,13 @@ export default defineConfig({
               return;
             }
 
+            const adminUsername = (process.env.ADMIN_USERNAME || 'admin').trim();
+            if (cleanUsername.toLowerCase() === adminUsername.toLowerCase()) {
+              res.statusCode = 400;
+              res.end(JSON.stringify({ error: 'Username is reserved' }));
+              return;
+            }
+
             const users = getUsers();
             if (users[cleanUsername]) {
               res.statusCode = 400;
@@ -873,16 +935,27 @@ export default defineConfig({
               return;
             }
 
+            const salt = crypto.randomBytes(16).toString('hex');
+            const passwordHash = crypto.createHash('sha256').update(password + salt).digest('hex');
+
             users[cleanUsername] = {
               username: cleanUsername,
-              password: hashPassword(password),
-              createdAt: Date.now()
+              salt,
+              passwordHash,
+              createdAt: Date.now(),
+              isAdmin: false
             };
             saveUsers(users);
 
-            const token = Buffer.from(cleanUsername).toString('base64');
+            const token = crypto.randomBytes(32).toString('hex');
+            activeSessions.set(token, {
+              username: cleanUsername,
+              isAdmin: false,
+              loginTime: Date.now()
+            });
+
             res.statusCode = 200;
-            res.end(JSON.stringify({ success: true, token, username: cleanUsername }));
+            res.end(JSON.stringify({ success: true, token, username: cleanUsername, isAdmin: false }));
           } catch (err) {
             res.statusCode = 500;
             res.end(JSON.stringify({ error: err.message }));
@@ -911,15 +984,21 @@ export default defineConfig({
             const users = getUsers();
             const user = users[cleanUsername];
 
-            if (!user || user.password !== hashPassword(password)) {
+            if (!user || !verifyPassword(user, password)) {
               res.statusCode = 401;
               res.end(JSON.stringify({ error: 'Invalid username or password' }));
               return;
             }
 
-            const token = Buffer.from(cleanUsername).toString('base64');
+            const token = crypto.randomBytes(32).toString('hex');
+            activeSessions.set(token, {
+              username: user.username,
+              isAdmin: !!user.isAdmin,
+              loginTime: Date.now()
+            });
+
             res.statusCode = 200;
-            res.end(JSON.stringify({ success: true, token, username: cleanUsername }));
+            res.end(JSON.stringify({ success: true, token, username: user.username, isAdmin: !!user.isAdmin }));
           } catch (err) {
             res.statusCode = 500;
             res.end(JSON.stringify({ error: err.message }));
@@ -929,6 +1008,11 @@ export default defineConfig({
         server.middlewares.use('/api/auth/logout', (req, res) => {
           res.setHeader('Content-Type', 'application/json');
           res.setHeader('Access-Control-Allow-Origin', '*');
+          const authHeader = req.headers['authorization'];
+          const token = authHeader && authHeader.split(' ')[1];
+          if (token) {
+            activeSessions.delete(token);
+          }
           res.statusCode = 200;
           res.end(JSON.stringify({ success: true }));
         });
@@ -936,14 +1020,144 @@ export default defineConfig({
         server.middlewares.use('/api/auth/me', (req, res) => {
           res.setHeader('Content-Type', 'application/json');
           res.setHeader('Access-Control-Allow-Origin', '*');
-          const username = authenticateToken(req);
-          if (!username) {
+          const authHeader = req.headers['authorization'];
+          const token = authHeader && authHeader.split(' ')[1];
+          if (!token) {
+            res.statusCode = 401;
+            res.end(JSON.stringify({ error: 'Unauthorized' }));
+            return;
+          }
+          const session = activeSessions.get(token);
+          if (!session) {
             res.statusCode = 401;
             res.end(JSON.stringify({ error: 'Unauthorized' }));
             return;
           }
           res.statusCode = 200;
-          res.end(JSON.stringify({ username }));
+          res.end(JSON.stringify({ username: session.username, isAdmin: !!session.isAdmin }));
+        });
+
+        // ─── Admin Endpoints (Dev) ───────────────────────────────────────────────────
+        server.middlewares.use('/api/admin', async (req, res) => {
+          res.setHeader('Content-Type', 'application/json');
+          res.setHeader('Access-Control-Allow-Origin', '*');
+
+          const adminSession = authenticateAdmin(req);
+          if (!adminSession) {
+            res.statusCode = 403;
+            res.end(JSON.stringify({ error: 'Forbidden: Admin access required' }));
+            return;
+          }
+
+          const reqUrl = new URL(req.url, `http://${req.headers.host || 'localhost:3000'}`);
+          const pathname = reqUrl.pathname;
+
+          if (pathname === '/status' && req.method === 'GET') {
+            const uniqueUsers = new Set();
+            for (const session of activeSessions.values()) {
+              uniqueUsers.add(session.username);
+            }
+
+            const systemStats = {
+              system: {
+                platform: os.platform(),
+                release: os.release(),
+                uptime: os.uptime(),
+                loadAvg: os.loadavg(),
+                totalMem: os.totalmem(),
+                freeMem: os.freemem(),
+                nodeMem: process.memoryUsage(),
+                nodeUptime: process.uptime()
+              },
+              activeUsers: uniqueUsers.size,
+              activeTorrents: activeTorrents.size
+            };
+            res.statusCode = 200;
+            res.end(JSON.stringify(systemStats));
+          } else if (pathname === '/users' && req.method === 'GET') {
+            const users = getUsers();
+            const histories = getHistories();
+            const usersList = Object.keys(users).map(username => {
+              const u = users[username];
+              return {
+                username: u.username,
+                isAdmin: !!u.isAdmin,
+                createdAt: u.createdAt,
+                historyCount: (histories[username] || []).length
+              };
+            });
+            res.statusCode = 200;
+            res.end(JSON.stringify(usersList));
+          } else if (pathname === '/torrents' && req.method === 'GET') {
+            const torrentsList = [];
+            for (const [infoHash, entry] of activeTorrents.entries()) {
+              const { torrent, lastAccessed } = entry;
+              torrentsList.push({
+                name: torrent.name,
+                infoHash: torrent.infoHash,
+                downloadSpeed: torrent.downloadSpeed,
+                uploadSpeed: torrent.uploadSpeed,
+                numPeers: torrent.numPeers,
+                progress: torrent.progress,
+                downloaded: torrent.downloaded,
+                length: torrent.length,
+                lastAccessed
+              });
+            }
+            res.statusCode = 200;
+            res.end(JSON.stringify(torrentsList));
+          } else if (pathname.startsWith('/torrents/') && req.method === 'DELETE') {
+            const parts = pathname.split('/');
+            const infoHash = parts[2].toLowerCase();
+            const entry = activeTorrents.get(infoHash);
+            if (!entry) {
+              res.statusCode = 404;
+              res.end(JSON.stringify({ error: 'Torrent not found' }));
+              return;
+            }
+
+            entry.torrent.destroy(() => {
+              activeTorrents.delete(infoHash);
+              res.statusCode = 200;
+              res.end(JSON.stringify({ success: true, message: 'Torrent purged successfully' }));
+            });
+          } else if (pathname.startsWith('/users/') && req.method === 'DELETE') {
+            const parts = pathname.split('/');
+            const targetUser = decodeURIComponent(parts[2]).trim();
+            const adminUsername = (process.env.ADMIN_USERNAME || 'admin').trim();
+
+            if (targetUser.toLowerCase() === adminSession.username.toLowerCase() || targetUser.toLowerCase() === adminUsername.toLowerCase()) {
+              res.statusCode = 400;
+              res.end(JSON.stringify({ error: 'Cannot delete the active admin account' }));
+              return;
+            }
+
+            const users = getUsers();
+            if (!users[targetUser]) {
+              res.statusCode = 404;
+              res.end(JSON.stringify({ error: 'User not found' }));
+              return;
+            }
+
+            delete users[targetUser];
+            saveUsers(users);
+
+            const histories = getHistories();
+            delete histories[targetUser];
+            saveHistories(histories);
+
+            for (const [token, session] of activeSessions.entries()) {
+              if (session.username.toLowerCase() === targetUser.toLowerCase()) {
+                activeSessions.delete(token);
+              }
+            }
+
+            res.statusCode = 200;
+            res.end(JSON.stringify({ success: true, message: `User ${targetUser} deleted successfully` }));
+          } else {
+            res.statusCode = 404;
+            res.end(JSON.stringify({ error: 'Not found' }));
+          }
         });
 
         // ─── History Endpoints (Dev) ─────────────────────────────────────────────────

@@ -98,7 +98,26 @@ class CloudStreamApp {
       switchToLoginBtn: document.getElementById('switch-to-login-btn'),
       userProfileBadge: document.getElementById('user-profile-badge'),
       userProfileName: document.getElementById('user-profile-name'),
-      logoutBtn: document.getElementById('logout-btn')
+      logoutBtn: document.getElementById('logout-btn'),
+
+      // Admin DOM elements
+      adminPanelBtn: document.getElementById('admin-panel-btn'),
+      adminDialog: document.getElementById('admin-dialog'),
+      closeAdminDialogBtn: document.getElementById('close-admin-dialog-btn'),
+      adminTabBtns: document.querySelectorAll('.admin-tab-btn'),
+      adminTabContents: document.querySelectorAll('.admin-tab-content'),
+      adminUsersList: document.getElementById('admin-users-list'),
+      adminTorrentsList: document.getElementById('admin-torrents-list'),
+      statsActiveUsers: document.getElementById('stats-active-users'),
+      statsActiveTorrents: document.getElementById('stats-active-torrents'),
+      statsNodeMem: document.getElementById('stats-node-mem'),
+      statsNodeMemRss: document.getElementById('stats-node-mem-rss'),
+      statsSysLoad: document.getElementById('stats-sys-load'),
+      statsSysUptime: document.getElementById('stats-sys-uptime'),
+      sysPlatform: document.getElementById('sys-platform'),
+      sysRelease: document.getElementById('sys-release'),
+      sysRamUsage: document.getElementById('sys-ram-usage'),
+      sysProcessUptime: document.getElementById('sys-process-uptime')
     };
 
     this.originalPlaceholderHtml = this.dom.playerPlaceholder.innerHTML;
@@ -106,7 +125,8 @@ class CloudStreamApp {
     // Auth State
     this.session = {
       username: localStorage.getItem('rawstream_session_username') || null,
-      token: localStorage.getItem('rawstream_session_token') || null
+      token: localStorage.getItem('rawstream_session_token') || null,
+      isAdmin: localStorage.getItem('rawstream_session_is_admin') === 'true'
     };
 
     this.init();
@@ -115,6 +135,7 @@ class CloudStreamApp {
   init() {
     this.setupEventListeners();
     this.setupAuthEventListeners();
+    this.setupAdminEventListeners();
     this.setupDragAndDrop();
     this.setupResizeObserver();
     this.checkClipboardPermission();
@@ -1196,7 +1217,7 @@ class CloudStreamApp {
       const res = await this.authenticatedFetch('/api/auth/me');
       if (res.ok) {
         const data = await res.json();
-        this.setSession(data.username, this.session.token);
+        this.setSession(data.username, this.session.token, !!data.isAdmin);
       } else {
         this.clearSession();
       }
@@ -1213,16 +1234,24 @@ class CloudStreamApp {
     }
   }
 
-  setSession(username, token) {
+  setSession(username, token, isAdmin = false) {
     this.session.username = username;
     this.session.token = token;
+    this.session.isAdmin = isAdmin;
     localStorage.setItem('rawstream_session_username', username);
     localStorage.setItem('rawstream_session_token', token);
+    localStorage.setItem('rawstream_session_is_admin', isAdmin ? 'true' : 'false');
 
     // Update UI
     this.dom.userProfileName.textContent = username;
     this.dom.userProfileBadge.classList.remove('hidden');
     this.showAuthScreen(false);
+
+    if (this.session.isAdmin) {
+      this.dom.adminPanelBtn.classList.remove('hidden');
+    } else {
+      this.dom.adminPanelBtn.classList.add('hidden');
+    }
 
     // Load and render history from backend
     this.syncHistoryFromBackend();
@@ -1231,14 +1260,21 @@ class CloudStreamApp {
   clearSession() {
     this.session.username = null;
     this.session.token = null;
+    this.session.isAdmin = false;
     localStorage.removeItem('rawstream_session_username');
     localStorage.removeItem('rawstream_session_token');
+    localStorage.removeItem('rawstream_session_is_admin');
 
     // Update UI
     this.dom.userProfileBadge.classList.add('hidden');
+    this.dom.adminPanelBtn.classList.add('hidden');
     this.history = [];
     this.renderHistory();
     this.showAuthScreen(true);
+
+    if (this.dom.adminDialog && this.dom.adminDialog.open) {
+      this.dom.adminDialog.close();
+    }
   }
 
   async handleLogin(e) {
@@ -1260,7 +1296,7 @@ class CloudStreamApp {
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        this.setSession(data.username, data.token);
+        this.setSession(data.username, data.token, !!data.isAdmin);
         this.showNotification('Welcome back!');
         this.dom.loginUsernameInput.value = '';
         this.dom.loginPasswordInput.value = '';
@@ -1304,7 +1340,7 @@ class CloudStreamApp {
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        this.setSession(data.username, data.token);
+        this.setSession(data.username, data.token, !!data.isAdmin);
         this.showNotification('Account created successfully!');
         this.dom.registerUsernameInput.value = '';
         this.dom.registerPasswordInput.value = '';
@@ -1352,6 +1388,227 @@ class CloudStreamApp {
     } catch (e) {
       console.error('Failed to sync history from backend:', e);
     }
+  }
+
+  setupAdminEventListeners() {
+    if (!this.dom.adminPanelBtn) return;
+
+    // Show Admin Dialog
+    this.dom.adminPanelBtn.addEventListener('click', () => {
+      this.dom.adminDialog.showModal();
+      this.loadAdminTab('status');
+    });
+
+    // Close Admin Dialog
+    this.dom.closeAdminDialogBtn.addEventListener('click', () => {
+      this.dom.adminDialog.close();
+    });
+
+    // Tab switching
+    this.dom.adminTabBtns.forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const tab = e.currentTarget.getAttribute('data-tab');
+        this.dom.adminTabBtns.forEach(b => b.classList.remove('active'));
+        e.currentTarget.classList.add('active');
+
+        this.dom.adminTabContents.forEach(c => c.classList.remove('active'));
+        document.getElementById(`admin-tab-${tab}`).classList.add('active');
+
+        this.loadAdminTab(tab);
+      });
+    });
+  }
+
+  async loadAdminTab(tab) {
+    if (tab === 'status') {
+      try {
+        const res = await this.authenticatedFetch('/api/admin/status');
+        if (res.ok) {
+          const data = await res.json();
+          this.renderAdminStatus(data);
+        }
+      } catch (e) {
+        console.error('Failed to load admin status:', e);
+      }
+    } else if (tab === 'users') {
+      try {
+        const res = await this.authenticatedFetch('/api/admin/users');
+        if (res.ok) {
+          const data = await res.json();
+          this.renderAdminUsers(data);
+        }
+      } catch (e) {
+        console.error('Failed to load admin users:', e);
+      }
+    } else if (tab === 'torrents') {
+      try {
+        const res = await this.authenticatedFetch('/api/admin/torrents');
+        if (res.ok) {
+          const data = await res.json();
+          this.renderAdminTorrents(data);
+        }
+      } catch (e) {
+        console.error('Failed to load admin torrents:', e);
+      }
+    }
+  }
+
+  renderAdminStatus(data) {
+    this.dom.statsActiveUsers.textContent = data.activeUsers;
+    this.dom.statsActiveTorrents.textContent = data.activeTorrents;
+    
+    // Format Memory
+    const heapUsedMB = (data.system.nodeMem.heapUsed / 1024 / 1024).toFixed(1);
+    const rssMB = (data.system.nodeMem.rss / 1024 / 1024).toFixed(1);
+    this.dom.statsNodeMem.textContent = `${heapUsedMB} MB`;
+    this.dom.statsNodeMemRss.textContent = `RSS: ${rssMB} MB`;
+
+    // System load & uptime
+    const load = (data.system.loadAvg && data.system.loadAvg[0]) ? data.system.loadAvg[0].toFixed(2) : '0.00';
+    this.dom.statsSysLoad.textContent = load;
+
+    const uptimeSec = data.system.uptime;
+    const hrs = Math.floor(uptimeSec / 3600);
+    const mins = Math.floor((uptimeSec % 3600) / 60);
+    this.dom.statsSysUptime.textContent = `Uptime: ${hrs}h ${mins}m`;
+
+    // Info details
+    this.dom.sysPlatform.textContent = data.system.platform;
+    this.dom.sysRelease.textContent = data.system.release;
+    
+    const totalMemGB = (data.system.totalMem / 1024 / 1024 / 1024).toFixed(1);
+    const freeMemGB = (data.system.freeMem / 1024 / 1024 / 1024).toFixed(1);
+    this.dom.sysRamUsage.textContent = `${freeMemGB} GB free / ${totalMemGB} GB total`;
+
+    const procUptimeSec = data.system.nodeUptime;
+    const pHrs = Math.floor(procUptimeSec / 3600);
+    const pMins = Math.floor((procUptimeSec % 3600) / 60);
+    this.dom.sysProcessUptime.textContent = `${pHrs}h ${pMins}m`;
+  }
+
+  renderAdminUsers(users) {
+    const list = this.dom.adminUsersList;
+    list.innerHTML = '';
+
+    if (users.length === 0) {
+      list.innerHTML = '<tr><td colspan="5" style="text-align: center;">No users registered.</td></tr>';
+      return;
+    }
+
+    users.forEach(u => {
+      const tr = document.createElement('tr');
+      
+      const roleBadge = u.isAdmin 
+        ? '<span style="color: var(--accent-secondary); font-weight: 600;">Admin</span>' 
+        : '<span>User</span>';
+
+      const regDate = new Date(u.createdAt).toLocaleDateString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+
+      const isCurrentAdmin = u.username.toLowerCase() === this.session.username.toLowerCase();
+      const deleteButton = isCurrentAdmin
+        ? `<button class="admin-action-btn" disabled>Delete</button>`
+        : `<button class="admin-action-btn delete-user-action" data-user="${encodeURIComponent(u.username)}">Delete</button>`;
+
+      tr.innerHTML = `
+        <td style="font-weight: 500; color: white;">${u.username}</td>
+        <td>${roleBadge}</td>
+        <td>${regDate}</td>
+        <td style="font-family: var(--font-mono);">${u.historyCount}</td>
+        <td>${deleteButton}</td>
+      `;
+      list.appendChild(tr);
+    });
+
+    // Attach listeners
+    list.querySelectorAll('.delete-user-action').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const user = decodeURIComponent(e.currentTarget.getAttribute('data-user'));
+        if (confirm(`Are you sure you want to delete user "${user}" and all their history?`)) {
+          try {
+            const res = await this.authenticatedFetch(`/api/admin/users/${encodeURIComponent(user)}`, {
+              method: 'DELETE'
+            });
+            if (res.ok) {
+              this.showNotification(`User ${user} deleted`);
+              this.loadAdminTab('users');
+            } else {
+              const data = await res.json();
+              this.showNotification(data.error || 'Failed to delete user');
+            }
+          } catch (err) {
+            this.showNotification('Error communicating with server');
+          }
+        }
+      });
+    });
+  }
+
+  renderAdminTorrents(torrents) {
+    const list = this.dom.adminTorrentsList;
+    list.innerHTML = '';
+
+    if (torrents.length === 0) {
+      list.innerHTML = '<tr><td colspan="6" style="text-align: center;">No active torrent streams in cache.</td></tr>';
+      return;
+    }
+
+    torrents.forEach(t => {
+      const tr = document.createElement('tr');
+
+      const sizeGB = (t.length / 1024 / 1024 / 1024).toFixed(2);
+      const progressPercent = (t.progress * 100).toFixed(1);
+      
+      const downSpeedMB = (t.downloadSpeed / 1024 / 1024).toFixed(2);
+      const upSpeedMB = (t.uploadSpeed / 1024 / 1024).toFixed(2);
+
+      const purgeButton = `<button class="admin-action-btn purge-torrent-action" data-hash="${t.infoHash}">Purge</button>`;
+
+      tr.innerHTML = `
+        <td style="font-weight: 500; color: white; max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${t.name || t.infoHash}">${t.name || 'Unnamed Torrent'}</td>
+        <td style="font-family: var(--font-mono);">${sizeGB} GB</td>
+        <td>
+          <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <div style="flex: 1; height: 6px; background: rgba(255,255,255,0.1); border-radius: 3px; min-width: 60px; position: relative; overflow: hidden;">
+              <div style="width: ${progressPercent}%; height: 100%; background: var(--accent-primary);"></div>
+            </div>
+            <span style="font-family: var(--font-mono); font-size: 0.75rem;">${progressPercent}%</span>
+          </div>
+        </td>
+        <td style="font-family: var(--font-mono); font-size: 0.75rem;">↓${downSpeedMB} MB/s | ↑${upSpeedMB} MB/s</td>
+        <td style="font-family: var(--font-mono);">${t.numPeers}</td>
+        <td>${purgeButton}</td>
+      `;
+      list.appendChild(tr);
+    });
+
+    // Attach listeners
+    list.querySelectorAll('.purge-torrent-action').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const hash = e.currentTarget.getAttribute('data-hash');
+        if (confirm(`Are you sure you want to purge/delete torrent stream cache for ${hash}?`)) {
+          try {
+            const res = await this.authenticatedFetch(`/api/admin/torrents/${hash}`, {
+              method: 'DELETE'
+            });
+            if (res.ok) {
+              this.showNotification('Torrent cache purged');
+              this.loadAdminTab('torrents');
+            } else {
+              const data = await res.json();
+              this.showNotification(data.error || 'Failed to purge torrent');
+            }
+          } catch (err) {
+            this.showNotification('Error communicating with server');
+          }
+        }
+      });
+    });
   }
 
   renderHistory() {
