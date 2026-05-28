@@ -503,7 +503,7 @@ export default function App() {
 
       const finalStreamUrl = resolvedTranscode
         ? `/api/stream?url=${encodeURIComponent(streamUrl)}&transcode=true&vcodec=${encodeURIComponent(resolvedVcodec)}&acodec=${encodeURIComponent(resolvedAcodec)}`
-        : `/api/stream?url=${encodeURIComponent(streamUrl)}`;
+        : streamUrl;
 
       const videoObj = {
         id: info.infoHash,

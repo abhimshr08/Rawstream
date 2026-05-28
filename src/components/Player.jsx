@@ -29,6 +29,7 @@ export default function Player({
   const [isPlaying, setIsPlaying] = useState(false);
   const [isBuffering, setIsBuffering] = useState(false);
   const [loaderMessage, setLoaderMessage] = useState('');
+  const [bufferPercent, setBufferPercent] = useState(0);
   const [showPlaceholder, setShowPlaceholder] = useState(true);
   const [videoError, setVideoError] = useState(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -330,6 +331,8 @@ export default function Player({
   const handlePlay = () => {
     setIsPlaying(true);
     setIsBuffering(false);
+    // Reset loader message so stale 'Seeking...' text never lingers after seek completes
+    setLoaderMessage('Buffering stream...');
     
     // Progress syncing
     if (syncIntervalRef.current) clearInterval(syncIntervalRef.current);
@@ -648,8 +651,25 @@ export default function Player({
         onPause={handlePause}
         onEnded={handleEnded}
         onError={handleVideoError}
-        onWaiting={() => setIsBuffering(true)}
-        onPlaying={() => setIsBuffering(false)}
+        onWaiting={() => { setIsBuffering(true); }}
+        onPlaying={() => { setIsBuffering(false); setLoaderMessage('Buffering stream...'); }}
+        onSeeking={() => { setIsBuffering(true); }}
+        onSeeked={() => { setIsBuffering(false); setLoaderMessage('Buffering stream...'); }}
+        onProgress={() => {
+          // Update buffer bar from video.buffered ranges
+          const video = videoRef.current;
+          if (!video || !video.buffered || video.buffered.length === 0) return;
+          const duration = needsTranscode ? mediaDuration : video.duration;
+          if (!duration || duration <= 0) return;
+          // Use the end of the last buffered range
+          const bufferedEnd = video.buffered.end(video.buffered.length - 1);
+          // For transcoded streams: bufferedEnd is relative to the current seek window;
+          // convert to global timeline position
+          const globalBufferedEnd = needsTranscode
+            ? transcodeStartTime + bufferedEnd
+            : bufferedEnd;
+          setBufferPercent(Math.min(100, (globalBufferedEnd / duration) * 100));
+        }}
       >
         Your browser does not support the video tag.
       </video>
@@ -695,6 +715,7 @@ export default function Player({
           toggleFullscreen={toggleFullscreen}
           isTheater={isTheater}
           toggleTheater={toggleTheater}
+          bufferPercent={bufferPercent}
         />
       )}
 

@@ -31,7 +31,8 @@ export default function Controls({
   isFullscreen,
   toggleFullscreen,
   isTheater,
-  toggleTheater
+  toggleTheater,
+  bufferPercent
 }) {
   // Volume state
   const [volume, setVolume] = useState(1);
@@ -353,8 +354,9 @@ export default function Controls({
     : (videoRef.current?.duration || 0);
 
   // Gradient fill inline styling
+  const maxBuffered = Math.max(progressPercent, bufferPercent || 0);
   const progressBgStyle = {
-    background: `linear-gradient(to right, var(--accent-primary) 0%, var(--accent-primary) ${progressPercent}%, rgba(255, 255, 255, 0.2) ${progressPercent}%, rgba(255, 255, 255, 0.2) 100%)`
+    background: `linear-gradient(to right, var(--accent-primary) 0%, var(--accent-primary) ${progressPercent}%, rgba(255, 255, 255, 0.4) ${progressPercent}%, rgba(255, 255, 255, 0.4) ${maxBuffered}%, rgba(255, 255, 255, 0.2) ${maxBuffered}%, rgba(255, 255, 255, 0.2) 100%)`
   };
 
   return (

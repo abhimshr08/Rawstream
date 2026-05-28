@@ -107,7 +107,8 @@ async function addTorrent(torrentSource) {
     let torrent;
     try {
       torrent = client.add(torrentSource, {
-        path: path.join(os.tmpdir(), 'webtorrent')
+        path: path.join(os.tmpdir(), 'webtorrent'),
+        deselect: true
       });
     } catch (err) {
       return reject(err);
@@ -123,18 +124,6 @@ async function addTorrent(torrentSource) {
 
     torrent.once('ready', () => {
       console.log(`[TorrentManager] Torrent ready: ${torrent.name}`);
-      
-      // Deselect all pieces by default to prevent downloading the entire file in the background.
-      // WebTorrent will still download pieces on-demand when file.createReadStream() is called.
-      if (typeof torrent.deselect === 'function' && torrent.pieces) {
-        try {
-          torrent.deselect(0, torrent.pieces.length - 1, 1);
-          console.log(`[TorrentManager] Deselected all pieces to preserve container disk/memory.`);
-        } catch (e) {
-          console.error('[TorrentManager] Failed to deselect pieces:', e.message);
-        }
-      }
-
       resolve(torrent);
     });
 
@@ -379,16 +368,17 @@ app.get('/api/probe', async (req, res) => {
       }
 
       console.log(`[Probe] Torrent probe failed/timed out. Applying smart fallback for ext: ${torrentExt}`);
-      const isMkv = torrentExt === '.mkv' || torrentExt === '.avi' || torrentExt === '.ts';
+      const isMp4 = torrentExt === '.mp4' || torrentExt === '.m4v' || torrentExt === '.mov';
+      const isMkv = torrentExt === '.mkv' || torrentExt === '.avi' || torrentExt === '.ts' || torrentExt === '.webm';
       res.json({
-        needsTranscode: true,
-        container: isMkv ? 'mkv' : 'mp4',
+        needsTranscode: !isMp4,
+        container: isMp4 ? 'mp4' : (isMkv ? 'mkv' : 'mp4'),
         videoCodec: 'h264',
-        audioCodec: 'ac3',
+        audioCodec: isMp4 ? 'aac' : 'ac3',
         duration: 0,
         videoSupported: true,
-        audioSupported: false,
-        containerSupported: !isMkv
+        audioSupported: isMp4,
+        containerSupported: isMp4
       });
       return;
     }
@@ -431,21 +421,26 @@ app.get('/api/stream', async (req, res) => {
     const supportedAudio = ['aac','mp3','opus','vorbis'];
     const targetQuality = req.query.quality || 'original';
 
-    let vopts = [];
     const isSeeking = startT && startT !== '0';
+    const canCopyVideo = supportedVideo.includes((vcodec || '').toLowerCase());
+    const canCopyAudio = supportedAudio.includes((acodec || '').toLowerCase());
+
+    let vopts = [];
     if (targetQuality === '720p') {
       vopts = ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-vf', 'scale=-2:720', '-pix_fmt', 'yuv420p', '-b:v', '1500k', '-maxrate', '2000k', '-bufsize', '3000k'];
     } else if (targetQuality === '480p') {
       vopts = ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-vf', 'scale=-2:480', '-pix_fmt', 'yuv420p', '-b:v', '800k', '-maxrate', '1200k', '-bufsize', '1800k'];
     } else {
-      // Force libx264 transcoding when seeking to align audio/video presentation timestamps accurately.
-      // Copying video (copy) with transcoded audio (aac) during seeks leads to A/V sync drift due to keyframe snapping.
-      vopts = (supportedVideo.includes((vcodec || '').toLowerCase()) && !isSeeking)
-        ? ['-c:v','copy']
-        : ['-c:v','libx264','-preset','ultrafast','-tune','zerolatency','-crf','23', '-pix_fmt', 'yuv420p'];
+      // Force libx264 transcoding when seeking AND audio is being transcoded.
+      // If both video and audio can be copied, copy both to keep them in sync without CPU usage.
+      vopts = (canCopyVideo && (!isSeeking || canCopyAudio))
+        ? ['-c:v', 'copy']
+        : ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-pix_fmt', 'yuv420p'];
     }
 
-    const aopts = ['-c:a', 'aac', '-b:a', '192k', '-af', 'aresample=async=1'];
+    const aopts = canCopyAudio
+      ? ['-c:a', 'copy']
+      : ['-c:a', 'aac', '-b:a', '192k', '-af', 'aresample=async=1'];
 
     const inputArgs = ['-fflags', '+genpts'];
     if (startT && startT !== '0') {
@@ -606,6 +601,15 @@ app.get('/api/torrent/stream', async (req, res) => {
 
     const entry = activeTorrents.get(infoHash.toLowerCase());
     if (entry) entry.lastAccessed = Date.now();
+
+    // Call file.select() so WebTorrent actively buffers this file in the background
+    if (typeof file.select === 'function') {
+      try {
+        file.select();
+      } catch (e) {
+        console.error('[TorrentStream] Failed to select file:', e.message);
+      }
+    }
 
     res.setHeader('Accept-Ranges', 'bytes');
     const mimeTypes = {
