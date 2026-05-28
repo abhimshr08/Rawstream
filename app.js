@@ -80,20 +80,45 @@ class CloudStreamApp {
       
       // Live Debug Log
       debugLogs: document.getElementById('debug-logs'),
-      clearDebugBtn: document.getElementById('clear-debug-btn')
+      clearDebugBtn: document.getElementById('clear-debug-btn'),
+
+      // Auth DOM Elements
+      authOverlay: document.getElementById('auth-overlay'),
+      authSubtitle: document.getElementById('auth-subtitle'),
+      loginForm: document.getElementById('login-form'),
+      registerForm: document.getElementById('register-form'),
+      loginUsernameInput: document.getElementById('login-username'),
+      loginPasswordInput: document.getElementById('login-password'),
+      loginError: document.getElementById('login-error'),
+      registerUsernameInput: document.getElementById('register-username'),
+      registerPasswordInput: document.getElementById('register-password'),
+      registerConfirmPasswordInput: document.getElementById('register-confirm-password'),
+      registerError: document.getElementById('register-error'),
+      switchToRegisterBtn: document.getElementById('switch-to-register-btn'),
+      switchToLoginBtn: document.getElementById('switch-to-login-btn'),
+      userProfileBadge: document.getElementById('user-profile-badge'),
+      userProfileName: document.getElementById('user-profile-name'),
+      logoutBtn: document.getElementById('logout-btn')
     };
 
     this.originalPlaceholderHtml = this.dom.playerPlaceholder.innerHTML;
+
+    // Auth State
+    this.session = {
+      username: localStorage.getItem('rawstream_session_username') || null,
+      token: localStorage.getItem('rawstream_session_token') || null
+    };
 
     this.init();
   }
 
   init() {
     this.setupEventListeners();
+    this.setupAuthEventListeners();
     this.setupDragAndDrop();
     this.setupResizeObserver();
-    this.renderHistory();
     this.checkClipboardPermission();
+    this.checkAuth();
   }
 
   setupEventListeners() {
@@ -400,7 +425,7 @@ class CloudStreamApp {
       this.logDebug(`Resolving Google Drive stream for fileId: ${id}`);
 
       try {
-        const resolveRes = await fetch(`/api/resolve?fileId=${encodeURIComponent(id)}`);
+        const resolveRes = await this.authenticatedFetch(`/api/resolve?fileId=${encodeURIComponent(id)}`);
         const resolveData = await resolveRes.json();
 
         if (!resolveRes.ok || resolveData.error) {
@@ -415,7 +440,7 @@ class CloudStreamApp {
 
         // Probe duration using yt-dlp metadata endpoint
         try {
-          const metaRes = await fetch(`/api/gdrive-meta?fileId=${encodeURIComponent(id)}`);
+          const metaRes = await this.authenticatedFetch(`/api/gdrive-meta?fileId=${encodeURIComponent(id)}`);
           if (metaRes.ok) {
             const meta = await metaRes.json();
             if (meta.duration) {
@@ -466,7 +491,7 @@ class CloudStreamApp {
       this.setLoaderMessage('Analyzing media...');
       this.logDebug(`Probing media: ${streamUrl}`);
       try {
-        const probeRes = await fetch(`/api/probe?url=${encodeURIComponent(streamUrl)}`);
+        const probeRes = await this.authenticatedFetch(`/api/probe?url=${encodeURIComponent(streamUrl)}`);
         const probeData = await probeRes.json();
 
         if (probeData.error) throw new Error(probeData.error);
@@ -680,7 +705,7 @@ class CloudStreamApp {
       const timeoutId = setTimeout(() => controller.abort(), 6000);
 
       try {
-        const checkRes = await fetch(proxiedUrl, {
+        const checkRes = await this.authenticatedFetch(proxiedUrl, {
           signal: controller.signal
         });
         clearTimeout(timeoutId);
@@ -1064,73 +1089,269 @@ class CloudStreamApp {
   }
 
   // Local Storage / History Manager
+  // Backend History Manager
   loadHistory() {
+    return [];
+  }
+
+  async addToHistory(videoObj) {
+    if (!this.session.token) return;
     try {
-      const data = localStorage.getItem('rawstream_history');
-      return data ? JSON.parse(data) : [];
-    } catch (e) {
-      console.error('History load failed:', e);
-      return [];
-    }
-  }
-
-  saveHistory() {
-    try {
-      localStorage.setItem('rawstream_history', JSON.stringify(this.history));
-    } catch (e) {
-      console.error('History save failed:', e);
-    }
-  }
-
-  addToHistory(videoObj) {
-    // Filter existing duplicates
-    this.history = this.history.filter(item => item.id !== videoObj.id);
-    
-    // Add to top of stack
-    this.history.unshift(videoObj);
-    
-    // Cap size at 50 entries
-    if (this.history.length > 50) {
-      this.history.pop();
-    }
-
-    this.saveHistory();
-    this.renderHistory();
-  }
-
-  deleteHistoryItem(id, event) {
-    event.stopPropagation(); // prevent loading item
-    this.history = this.history.filter(item => item.id !== id);
-    this.saveHistory();
-    this.renderHistory();
-    this.showNotification('Stream removed from history');
-  }
-
-  clearAllHistory() {
-    if (confirm('Are you sure you want to clear your streaming history?')) {
-      this.history = [];
-      this.saveHistory();
-      this.renderHistory();
-      this.showNotification('History cleared');
-    }
-  }
-
-  editHistoryItemTitle(id, newTitle) {
-    this.history = this.history.map(item => {
-      if (item.id === id) {
-        return { ...item, title: newTitle };
+      const res = await this.authenticatedFetch('/api/history', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ videoObj })
+      });
+      if (res.ok) {
+        this.history = await res.json();
+        this.renderHistory();
       }
-      return item;
+    } catch (e) {
+      console.error('Failed to add to history:', e);
+    }
+  }
+
+  async deleteHistoryItem(id, event) {
+    if (event) event.stopPropagation();
+    if (!this.session.token) return;
+    try {
+      const res = await this.authenticatedFetch(`/api/history/${id}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        this.history = await res.json();
+        this.renderHistory();
+        this.showNotification('Stream removed from history');
+      }
+    } catch (e) {
+      console.error('Failed to delete history item:', e);
+    }
+  }
+
+  async clearAllHistory() {
+    if (confirm('Are you sure you want to clear your entire streaming history?')) {
+      if (!this.session.token) return;
+      try {
+        const res = await this.authenticatedFetch('/api/history', {
+          method: 'DELETE'
+        });
+        if (res.ok) {
+          this.history = [];
+          this.renderHistory();
+          this.showNotification('History cleared');
+        }
+      } catch (e) {
+        console.error('Failed to clear history:', e);
+      }
+    }
+  }
+
+  async editHistoryItemTitle(id, newTitle) {
+    if (!this.session.token) return;
+    try {
+      const res = await this.authenticatedFetch(`/api/history/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: newTitle })
+      });
+      if (res.ok) {
+        this.history = await res.json();
+        if (this.currentVideo && this.currentVideo.id === id) {
+          this.currentVideo.title = newTitle;
+        }
+        this.renderHistory();
+        this.showNotification('Title updated');
+      }
+    } catch (e) {
+      console.error('Failed to edit history item title:', e);
+    }
+  }
+
+  // ─── Authentication Managers ────────────────────────────────────────────────
+  setupAuthEventListeners() {
+    this.dom.switchToRegisterBtn.addEventListener('click', () => {
+      this.dom.loginForm.classList.add('hidden');
+      this.dom.registerForm.classList.remove('hidden');
+      this.dom.authSubtitle.textContent = 'Create a new account';
     });
+
+    this.dom.switchToLoginBtn.addEventListener('click', () => {
+      this.dom.registerForm.classList.add('hidden');
+      this.dom.loginForm.classList.remove('hidden');
+      this.dom.authSubtitle.textContent = 'Sign in to your private workspace';
+    });
+
+    this.dom.loginForm.addEventListener('submit', (e) => this.handleLogin(e));
+    this.dom.registerForm.addEventListener('submit', (e) => this.handleRegister(e));
+    this.dom.logoutBtn.addEventListener('click', () => this.handleLogout());
+  }
+
+  async checkAuth() {
+    if (!this.session.token) {
+      this.showAuthScreen(true);
+      return;
+    }
     
-    // Update current video title if playing
-    if (this.currentVideo && this.currentVideo.id === id) {
-      this.currentVideo.title = newTitle;
+    try {
+      const res = await this.authenticatedFetch('/api/auth/me');
+      if (res.ok) {
+        const data = await res.json();
+        this.setSession(data.username, this.session.token);
+      } else {
+        this.clearSession();
+      }
+    } catch (e) {
+      this.clearSession();
+    }
+  }
+
+  showAuthScreen(show) {
+    if (show) {
+      this.dom.authOverlay.classList.remove('hidden');
+    } else {
+      this.dom.authOverlay.classList.add('hidden');
+    }
+  }
+
+  setSession(username, token) {
+    this.session.username = username;
+    this.session.token = token;
+    localStorage.setItem('rawstream_session_username', username);
+    localStorage.setItem('rawstream_session_token', token);
+
+    // Update UI
+    this.dom.userProfileName.textContent = username;
+    this.dom.userProfileBadge.classList.remove('hidden');
+    this.showAuthScreen(false);
+
+    // Load and render history from backend
+    this.syncHistoryFromBackend();
+  }
+
+  clearSession() {
+    this.session.username = null;
+    this.session.token = null;
+    localStorage.removeItem('rawstream_session_username');
+    localStorage.removeItem('rawstream_session_token');
+
+    // Update UI
+    this.dom.userProfileBadge.classList.add('hidden');
+    this.history = [];
+    this.renderHistory();
+    this.showAuthScreen(true);
+  }
+
+  async handleLogin(e) {
+    e.preventDefault();
+    const username = this.dom.loginUsernameInput.value.trim();
+    const password = this.dom.loginPasswordInput.value;
+    
+    this.dom.loginError.classList.add('hidden');
+    const submitBtn = this.dom.loginForm.querySelector('.auth-submit-btn');
+    const spinner = submitBtn.querySelector('.auth-spinner');
+    submitBtn.disabled = true;
+    spinner.classList.remove('hidden');
+
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        this.setSession(data.username, data.token);
+        this.showNotification('Welcome back!');
+        this.dom.loginUsernameInput.value = '';
+        this.dom.loginPasswordInput.value = '';
+      } else {
+        this.dom.loginError.textContent = data.error || 'Login failed';
+        this.dom.loginError.classList.remove('hidden');
+      }
+    } catch (err) {
+      this.dom.loginError.textContent = 'Server connection failed';
+      this.dom.loginError.classList.remove('hidden');
+    } finally {
+      submitBtn.disabled = false;
+      spinner.classList.add('hidden');
+    }
+  }
+
+  async handleRegister(e) {
+    e.preventDefault();
+    const username = this.dom.registerUsernameInput.value.trim();
+    const password = this.dom.registerPasswordInput.value;
+    const confirmPassword = this.dom.registerConfirmPasswordInput.value;
+
+    this.dom.registerError.classList.add('hidden');
+
+    if (password !== confirmPassword) {
+      this.dom.registerError.textContent = 'Passwords do not match';
+      this.dom.registerError.classList.remove('hidden');
+      return;
     }
 
-    this.saveHistory();
-    this.renderHistory();
-    this.showNotification('Title updated');
+    const submitBtn = this.dom.registerForm.querySelector('.auth-submit-btn');
+    const spinner = submitBtn.querySelector('.auth-spinner');
+    submitBtn.disabled = true;
+    spinner.classList.remove('hidden');
+
+    try {
+      const res = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        this.setSession(data.username, data.token);
+        this.showNotification('Account created successfully!');
+        this.dom.registerUsernameInput.value = '';
+        this.dom.registerPasswordInput.value = '';
+        this.dom.registerConfirmPasswordInput.value = '';
+      } else {
+        this.dom.registerError.textContent = data.error || 'Registration failed';
+        this.dom.registerError.classList.remove('hidden');
+      }
+    } catch (err) {
+      this.dom.registerError.textContent = 'Server connection failed';
+      this.dom.registerError.classList.remove('hidden');
+    } finally {
+      submitBtn.disabled = false;
+      spinner.classList.add('hidden');
+    }
+  }
+
+  async handleLogout() {
+    try {
+      await this.authenticatedFetch('/api/auth/logout', { method: 'POST' });
+    } catch (e) {}
+    this.clearSession();
+    this.showNotification('Logged out successfully');
+  }
+
+  async authenticatedFetch(url, options = {}) {
+    options.headers = options.headers || {};
+    if (this.session.token) {
+      options.headers['Authorization'] = `Bearer ${this.session.token}`;
+    }
+    const res = await fetch(url, options);
+    if (res.status === 401) {
+      this.clearSession();
+    }
+    return res;
+  }
+
+  async syncHistoryFromBackend() {
+    try {
+      const res = await this.authenticatedFetch('/api/history');
+      if (res.ok) {
+        this.history = await res.json();
+        this.renderHistory();
+      }
+    } catch (e) {
+      console.error('Failed to sync history from backend:', e);
+    }
   }
 
   renderHistory() {
@@ -1388,14 +1609,14 @@ class CloudStreamApp {
       let response;
       if (torrentSource instanceof Uint8Array || ArrayBuffer.isView(torrentSource)) {
         // Upload dropped torrent file
-        response = await fetch('/api/torrent/info', {
+        response = await this.authenticatedFetch('/api/torrent/info', {
           method: 'POST',
           headers: { 'Content-Type': 'application/octet-stream' },
           body: torrentSource
         });
       } else {
         // Request torrent URL / magnet
-        response = await fetch(`/api/torrent/info?torrentUrl=${encodeURIComponent(torrentSource)}`);
+        response = await this.authenticatedFetch(`/api/torrent/info?torrentUrl=${encodeURIComponent(torrentSource)}`);
       }
 
       const info = await response.json();
@@ -1443,7 +1664,7 @@ class CloudStreamApp {
 
     // Probe the torrent stream via /api/probe
     try {
-      const probeRes = await fetch(`/api/probe?url=${encodeURIComponent(streamUrl)}`);
+      const probeRes = await this.authenticatedFetch(`/api/probe?url=${encodeURIComponent(streamUrl)}`);
       const probeData = await probeRes.json();
 
       if (probeData.error) throw new Error(probeData.error);
@@ -1502,7 +1723,7 @@ class CloudStreamApp {
 
     this.torrentPollingInterval = setInterval(async () => {
       try {
-        const res = await fetch(`/api/torrent/status?infoHash=${encodeURIComponent(infoHash)}`);
+        const res = await this.authenticatedFetch(`/api/torrent/status?infoHash=${encodeURIComponent(infoHash)}`);
         if (!res.ok) return;
         const stats = await res.json();
         

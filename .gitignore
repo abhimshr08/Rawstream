@@ -5,3 +5,8 @@ dist/
 *.log
 dom.html
 test_player.js
+data/
+*.js
+!vite.config.js
+!server.js
+!app.js

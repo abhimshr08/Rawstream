@@ -6,8 +6,69 @@ import path from 'path';
 import os from 'os';
 import WebTorrent from 'webtorrent';
 import parseTorrent from 'parse-torrent';
+import fs from 'fs';
+import crypto from 'crypto';
 
 const execPromise = util.promisify(exec);
+
+// ─── User Database & History Manager ──────────────────────────────────────────
+const DATA_DIR = path.join(process.cwd(), 'data');
+const USERS_FILE = path.join(DATA_DIR, 'users.json');
+const HISTORY_FILE = path.join(DATA_DIR, 'history.json');
+
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+if (!fs.existsSync(USERS_FILE)) {
+  fs.writeFileSync(USERS_FILE, JSON.stringify({}));
+}
+if (!fs.existsSync(HISTORY_FILE)) {
+  fs.writeFileSync(HISTORY_FILE, JSON.stringify({}));
+}
+
+function hashPassword(password) {
+  return crypto.createHash('sha256').update(password).digest('hex');
+}
+
+function getUsers() {
+  try {
+    return JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
+  } catch (e) {
+    return {};
+  }
+}
+
+function saveUsers(users) {
+  fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
+}
+
+function getHistories() {
+  try {
+    return JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'));
+  } catch (e) {
+    return {};
+  }
+}
+
+function saveHistories(histories) {
+  fs.writeFileSync(HISTORY_FILE, JSON.stringify(histories, null, 2));
+}
+
+function authenticateToken(req) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) return null;
+  try {
+    const username = Buffer.from(token, 'base64').toString('utf8');
+    const users = getUsers();
+    if (users[username]) {
+      return username;
+    }
+  } catch (e) {
+    return null;
+  }
+  return null;
+}
 
 // ─── Torrent Manager ───────────────────────────────────────────────────────────
 let torrentClient = null;
@@ -552,7 +613,8 @@ export default defineConfig({
             let resolvedUrl = targetUrl;
             if (targetUrl.startsWith('/')) {
               if (targetUrl.startsWith('/api/')) {
-                resolvedUrl = `http://127.0.0.1:3000${targetUrl}`;
+                const host = req.headers.host || '127.0.0.1:3000';
+                resolvedUrl = `http://${host}${targetUrl}`;
               }
             }
 
@@ -608,7 +670,43 @@ export default defineConfig({
             res.end(JSON.stringify({ needsTranscode, container, videoCodec, audioCodec, duration, videoSupported, audioSupported, containerSupported }));
 
           } catch (err) {
-            console.error('Probe error:', err);
+            console.error('[Probe Dev] Error probing URL:', err.message);
+
+            if (targetUrl && targetUrl.includes('/api/torrent/stream')) {
+              let torrentExt = '';
+              try {
+                const targetObj = new URL(resolvedUrl);
+                const infoHash = targetObj.searchParams.get('infoHash');
+                const fileIndex = parseInt(targetObj.searchParams.get('fileIndex') || '0', 10);
+                if (infoHash) {
+                  const entry = activeTorrents.get(infoHash.toLowerCase());
+                  if (entry && entry.torrent && entry.torrent.files[fileIndex]) {
+                    const file = entry.torrent.files[fileIndex];
+                    torrentExt = path.extname(file.name).toLowerCase();
+                  }
+                }
+              } catch (e) {
+                console.error('[Probe Dev] Failed to parse torrent info for fallback:', e.message);
+              }
+
+              console.log(`[Probe Dev] Torrent probe failed/timed out. Applying smart fallback for ext: ${torrentExt}`);
+              const isMkv = torrentExt === '.mkv' || torrentExt === '.avi' || torrentExt === '.ts';
+              res.statusCode = 200;
+              res.setHeader('Content-Type', 'application/json');
+              res.setHeader('Access-Control-Allow-Origin', '*');
+              res.end(JSON.stringify({
+                needsTranscode: true,
+                container: isMkv ? 'mkv' : 'mp4',
+                videoCodec: 'h264',
+                audioCodec: 'ac3',
+                duration: 0,
+                videoSupported: true,
+                audioSupported: false,
+                containerSupported: !isMkv
+              }));
+              return;
+            }
+
             res.statusCode = 500;
             res.setHeader('Content-Type', 'application/json');
             res.setHeader('Access-Control-Allow-Origin', '*');
@@ -740,6 +838,228 @@ export default defineConfig({
             res.setHeader('Access-Control-Allow-Origin', '*');
             res.end('Internal Server Error: ' + err.message);
           }
+        });
+
+        // ─── Auth Endpoints (Dev) ────────────────────────────────────────────────────
+        server.middlewares.use('/api/auth/register', async (req, res) => {
+          res.setHeader('Content-Type', 'application/json');
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          if (req.method !== 'POST') {
+            res.statusCode = 405;
+            res.end(JSON.stringify({ error: 'Method not allowed' }));
+            return;
+          }
+          try {
+            const raw = await readRawBody(req);
+            const { username, password } = JSON.parse(raw.toString() || '{}');
+
+            if (!username || !password) {
+              res.statusCode = 400;
+              res.end(JSON.stringify({ error: 'Username and password are required' }));
+              return;
+            }
+
+            const cleanUsername = username.trim();
+            if (cleanUsername.length < 3 || cleanUsername.length > 20 || !/^[a-zA-Z0-9_]+$/.test(cleanUsername)) {
+              res.statusCode = 400;
+              res.end(JSON.stringify({ error: 'Username must be alphanumeric (plus underscores) and between 3-20 characters' }));
+              return;
+            }
+
+            const users = getUsers();
+            if (users[cleanUsername]) {
+              res.statusCode = 400;
+              res.end(JSON.stringify({ error: 'Username already exists' }));
+              return;
+            }
+
+            users[cleanUsername] = {
+              username: cleanUsername,
+              password: hashPassword(password),
+              createdAt: Date.now()
+            };
+            saveUsers(users);
+
+            const token = Buffer.from(cleanUsername).toString('base64');
+            res.statusCode = 200;
+            res.end(JSON.stringify({ success: true, token, username: cleanUsername }));
+          } catch (err) {
+            res.statusCode = 500;
+            res.end(JSON.stringify({ error: err.message }));
+          }
+        });
+
+        server.middlewares.use('/api/auth/login', async (req, res) => {
+          res.setHeader('Content-Type', 'application/json');
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          if (req.method !== 'POST') {
+            res.statusCode = 405;
+            res.end(JSON.stringify({ error: 'Method not allowed' }));
+            return;
+          }
+          try {
+            const raw = await readRawBody(req);
+            const { username, password } = JSON.parse(raw.toString() || '{}');
+
+            if (!username || !password) {
+              res.statusCode = 400;
+              res.end(JSON.stringify({ error: 'Username and password are required' }));
+              return;
+            }
+
+            const cleanUsername = username.trim();
+            const users = getUsers();
+            const user = users[cleanUsername];
+
+            if (!user || user.password !== hashPassword(password)) {
+              res.statusCode = 401;
+              res.end(JSON.stringify({ error: 'Invalid username or password' }));
+              return;
+            }
+
+            const token = Buffer.from(cleanUsername).toString('base64');
+            res.statusCode = 200;
+            res.end(JSON.stringify({ success: true, token, username: cleanUsername }));
+          } catch (err) {
+            res.statusCode = 500;
+            res.end(JSON.stringify({ error: err.message }));
+          }
+        });
+
+        server.middlewares.use('/api/auth/logout', (req, res) => {
+          res.setHeader('Content-Type', 'application/json');
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.statusCode = 200;
+          res.end(JSON.stringify({ success: true }));
+        });
+
+        server.middlewares.use('/api/auth/me', (req, res) => {
+          res.setHeader('Content-Type', 'application/json');
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          const username = authenticateToken(req);
+          if (!username) {
+            res.statusCode = 401;
+            res.end(JSON.stringify({ error: 'Unauthorized' }));
+            return;
+          }
+          res.statusCode = 200;
+          res.end(JSON.stringify({ username }));
+        });
+
+        // ─── History Endpoints (Dev) ─────────────────────────────────────────────────
+        server.middlewares.use('/api/history', async (req, res) => {
+          res.setHeader('Content-Type', 'application/json');
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          
+          const username = authenticateToken(req);
+          if (!username) {
+            res.statusCode = 401;
+            res.end(JSON.stringify({ error: 'Unauthorized' }));
+            return;
+          }
+
+          const reqUrl = new URL(req.url, `http://${req.headers.host || 'localhost:3000'}`);
+
+          if (req.method === 'GET') {
+            const histories = getHistories();
+            const userHistory = histories[username] || [];
+            res.statusCode = 200;
+            res.end(JSON.stringify(userHistory));
+            return;
+          }
+
+          if (req.method === 'POST') {
+            try {
+              const raw = await readRawBody(req);
+              const { videoObj } = JSON.parse(raw.toString() || '{}');
+
+              if (!videoObj || !videoObj.id) {
+                res.statusCode = 400;
+                res.end(JSON.stringify({ error: 'Invalid history payload' }));
+                return;
+              }
+
+              const histories = getHistories();
+              let userHistory = histories[username] || [];
+
+              userHistory = userHistory.filter(item => item.id !== videoObj.id);
+              userHistory.unshift(videoObj);
+
+              if (userHistory.length > 50) {
+                userHistory.pop();
+              }
+
+              histories[username] = userHistory;
+              saveHistories(histories);
+
+              res.statusCode = 200;
+              res.end(JSON.stringify(userHistory));
+            } catch (err) {
+              res.statusCode = 500;
+              res.end(JSON.stringify({ error: err.message }));
+            }
+            return;
+          }
+
+          if (req.method === 'DELETE') {
+            const pathParts = req.url.split('/');
+            const id = pathParts[1];
+
+            if (id && id !== '') {
+              const histories = getHistories();
+              let userHistory = histories[username] || [];
+              userHistory = userHistory.filter(item => item.id !== id);
+              histories[username] = userHistory;
+              saveHistories(histories);
+              res.statusCode = 200;
+              res.end(JSON.stringify(userHistory));
+            } else {
+              const histories = getHistories();
+              histories[username] = [];
+              saveHistories(histories);
+              res.statusCode = 200;
+              res.end(JSON.stringify([]));
+            }
+            return;
+          }
+
+          if (req.method === 'PUT') {
+            const pathParts = req.url.split('/');
+            const id = pathParts[1];
+            if (!id) {
+              res.statusCode = 400;
+              res.end(JSON.stringify({ error: 'ID is required' }));
+              return;
+            }
+            try {
+              const raw = await readRawBody(req);
+              const { title } = JSON.parse(raw.toString() || '{}');
+
+              if (!title) {
+                res.statusCode = 400;
+                res.end(JSON.stringify({ error: 'Title is required' }));
+                return;
+              }
+
+              const histories = getHistories();
+              const userHistory = histories[username] || [];
+              const item = userHistory.find(item => item.id === id);
+              if (item) {
+                item.title = title;
+                histories[username] = userHistory;
+                saveHistories(histories);
+              }
+              res.statusCode = 200;
+              res.end(JSON.stringify(userHistory));
+            } catch (err) {
+              res.statusCode = 500;
+              res.end(JSON.stringify({ error: err.message }));
+            }
+            return;
+          }
+
+          res.statusCode = 405;
+          res.end(JSON.stringify({ error: 'Method not allowed' }));
         });
       }
     }

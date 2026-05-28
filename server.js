@@ -13,6 +13,8 @@ import util from 'util';
 import os from 'os';
 import WebTorrent from 'webtorrent';
 import parseTorrent from 'parse-torrent';
+import fs from 'fs';
+import crypto from 'crypto';
 
 const execPromise = util.promisify(exec);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -344,7 +346,41 @@ app.get('/api/probe', async (req, res) => {
 
     res.json({ needsTranscode, container, videoCodec, audioCodec, duration, videoSupported, audioSupported, containerSupported });
   } catch (err) {
-    console.error('[Probe]', err.message);
+    console.error('[Probe] Error probing URL:', err.message);
+    
+    // Smart fallback for torrent streams to ensure audio always plays
+    if (targetUrl && targetUrl.includes('/api/torrent/stream')) {
+      let torrentExt = '';
+      try {
+        const targetObj = new URL(resolvedUrl);
+        const infoHash = targetObj.searchParams.get('infoHash');
+        const fileIndex = parseInt(targetObj.searchParams.get('fileIndex') || '0', 10);
+        if (infoHash) {
+          const entry = activeTorrents.get(infoHash.toLowerCase());
+          if (entry && entry.torrent && entry.torrent.files[fileIndex]) {
+            const file = entry.torrent.files[fileIndex];
+            torrentExt = path.extname(file.name).toLowerCase();
+          }
+        }
+      } catch (e) {
+        console.error('[Probe] Failed to parse torrent info for fallback:', e.message);
+      }
+
+      console.log(`[Probe] Torrent probe failed/timed out. Applying smart fallback for ext: ${torrentExt}`);
+      const isMkv = torrentExt === '.mkv' || torrentExt === '.avi' || torrentExt === '.ts';
+      res.json({
+        needsTranscode: true,
+        container: isMkv ? 'mkv' : 'mp4',
+        videoCodec: 'h264',
+        audioCodec: 'ac3',
+        duration: 0,
+        videoSupported: true,
+        audioSupported: false,
+        containerSupported: !isMkv
+      });
+      return;
+    }
+
     res.status(500).json({ error: 'Probe failed: ' + err.message });
   }
 });
@@ -605,6 +641,266 @@ app.get('/api/torrent/stream', async (req, res) => {
     if (!res.headersSent) {
       res.status(500).send(err.message);
     }
+  }
+});
+
+// ─── User Database & History Manager ──────────────────────────────────────────
+const DATA_DIR = path.join(process.cwd(), 'data');
+const USERS_FILE = path.join(DATA_DIR, 'users.json');
+const HISTORY_FILE = path.join(DATA_DIR, 'history.json');
+
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+if (!fs.existsSync(USERS_FILE)) {
+  fs.writeFileSync(USERS_FILE, JSON.stringify({}));
+}
+if (!fs.existsSync(HISTORY_FILE)) {
+  fs.writeFileSync(HISTORY_FILE, JSON.stringify({}));
+}
+
+function hashPassword(password) {
+  return crypto.createHash('sha256').update(password).digest('hex');
+}
+
+function getUsers() {
+  try {
+    return JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
+  } catch (e) {
+    return {};
+  }
+}
+
+function saveUsers(users) {
+  fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
+}
+
+function getHistories() {
+  try {
+    return JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8'));
+  } catch (e) {
+    return {};
+  }
+}
+
+function saveHistories(histories) {
+  fs.writeFileSync(HISTORY_FILE, JSON.stringify(histories, null, 2));
+}
+
+function authenticateToken(req) {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) return null;
+  try {
+    const username = Buffer.from(token, 'base64').toString('utf8');
+    const users = getUsers();
+    if (users[username]) {
+      return username;
+    }
+  } catch (e) {
+    return null;
+  }
+  return null;
+}
+
+// ─── Auth Endpoints ───────────────────────────────────────────────────────────
+app.post('/api/auth/register', async (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  try {
+    const raw = await readRawBody(req);
+    const { username, password } = JSON.parse(raw.toString() || '{}');
+
+    if (!username || !password) {
+      res.status(400).json({ error: 'Username and password are required' });
+      return;
+    }
+
+    const cleanUsername = username.trim();
+    if (cleanUsername.length < 3 || cleanUsername.length > 20 || !/^[a-zA-Z0-9_]+$/.test(cleanUsername)) {
+      res.status(400).json({ error: 'Username must be alphanumeric (plus underscores) and between 3-20 characters' });
+      return;
+    }
+
+    const users = getUsers();
+    if (users[cleanUsername]) {
+      res.status(400).json({ error: 'Username already exists' });
+      return;
+    }
+
+    users[cleanUsername] = {
+      username: cleanUsername,
+      password: hashPassword(password),
+      createdAt: Date.now()
+    };
+    saveUsers(users);
+
+    const token = Buffer.from(cleanUsername).toString('base64');
+    res.json({ success: true, token, username: cleanUsername });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  try {
+    const raw = await readRawBody(req);
+    const { username, password } = JSON.parse(raw.toString() || '{}');
+
+    if (!username || !password) {
+      res.status(400).json({ error: 'Username and password are required' });
+      return;
+    }
+
+    const cleanUsername = username.trim();
+    const users = getUsers();
+    const user = users[cleanUsername];
+
+    if (!user || user.password !== hashPassword(password)) {
+      res.status(401).json({ error: 'Invalid username or password' });
+      return;
+    }
+
+    const token = Buffer.from(cleanUsername).toString('base64');
+    res.json({ success: true, token, username: cleanUsername });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.json({ success: true });
+});
+
+app.get('/api/auth/me', (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  const username = authenticateToken(req);
+  if (!username) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+  res.json({ username });
+});
+
+// ─── History Endpoints ────────────────────────────────────────────────────────
+app.get('/api/history', (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  const username = authenticateToken(req);
+  if (!username) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+  const histories = getHistories();
+  const userHistory = histories[username] || [];
+  res.json(userHistory);
+});
+
+app.post('/api/history', async (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  const username = authenticateToken(req);
+  if (!username) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+  try {
+    const raw = await readRawBody(req);
+    const { videoObj } = JSON.parse(raw.toString() || '{}');
+
+    if (!videoObj || !videoObj.id) {
+      res.status(400).json({ error: 'Invalid history payload' });
+      return;
+    }
+
+    const histories = getHistories();
+    let userHistory = histories[username] || [];
+
+    // Remove existing duplicates
+    userHistory = userHistory.filter(item => item.id !== videoObj.id);
+    
+    // Add to top of stack
+    userHistory.unshift(videoObj);
+    
+    // Cap size at 50 entries
+    if (userHistory.length > 50) {
+      userHistory.pop();
+    }
+
+    histories[username] = userHistory;
+    saveHistories(histories);
+
+    res.json(userHistory);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/history', (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  const username = authenticateToken(req);
+  if (!username) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+  const histories = getHistories();
+  histories[username] = [];
+  saveHistories(histories);
+  res.json([]);
+});
+
+app.delete('/api/history/:id', (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  const username = authenticateToken(req);
+  if (!username) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+  const id = req.params.id;
+  const histories = getHistories();
+  let userHistory = histories[username] || [];
+  userHistory = userHistory.filter(item => item.id !== id);
+  histories[username] = userHistory;
+  saveHistories(histories);
+  res.json(userHistory);
+});
+
+app.put('/api/history/:id', async (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  const username = authenticateToken(req);
+  if (!username) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+  try {
+    const id = req.params.id;
+    const raw = await readRawBody(req);
+    const { title } = JSON.parse(raw.toString() || '{}');
+
+    if (!title) {
+      res.status(400).json({ error: 'Title is required' });
+      return;
+    }
+
+    const histories = getHistories();
+    const userHistory = histories[username] || [];
+    const item = userHistory.find(item => item.id === id);
+    if (item) {
+      item.title = title;
+      histories[username] = userHistory;
+      saveHistories(histories);
+    }
+    res.json(userHistory);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
