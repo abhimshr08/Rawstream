@@ -152,6 +152,7 @@ class CloudStreamApp {
     this.historySyncTimer = null;
     this.pendingResumeTime = 0;
     this.probePollingInterval = null;
+    this.isDraggingProgress = false;
 
     this.init();
   }
@@ -796,6 +797,8 @@ class CloudStreamApp {
   }
 
   onTimeUpdate() {
+    if (this.isDraggingProgress) return;
+
     const video = this.dom.video;
     let duration, displayTime;
 
@@ -940,11 +943,13 @@ class CloudStreamApp {
   }
 
   onProgressBarInput(e) {
+    this.isDraggingProgress = true;
     // Keep styling gradient during slider drag
     this.updateProgressBarGradient();
   }
 
   onProgressBarChange(e) {
+    this.isDraggingProgress = false;
     const duration = this.currentDriveFileId
       ? this.mediaDuration
       : (this.needsTranscode ? this.mediaDuration : this.dom.video.duration);
@@ -1176,7 +1181,11 @@ class CloudStreamApp {
 
     this.transcodeStartTime = seconds;
     const rawUrl = this.currentVideo.rawStreamUrl || this.currentVideo.streamUrl;
-    const proxiedUrl = `/api/stream?url=${encodeURIComponent(rawUrl)}&transcode=true&vcodec=${encodeURIComponent(this.vcodec)}&acodec=${encodeURIComponent(this.acodec)}&start=${Math.floor(seconds)}`;
+    
+    let proxiedUrl = `/api/stream?url=${encodeURIComponent(rawUrl)}&transcode=true&vcodec=${encodeURIComponent(this.vcodec)}&acodec=${encodeURIComponent(this.acodec)}&start=${Math.floor(seconds)}`;
+    if (this.selectedQuality && this.selectedQuality !== 'original') {
+      proxiedUrl += `&quality=${this.selectedQuality}`;
+    }
 
     this.dom.video.src = proxiedUrl;
     this.dom.video.load();
