@@ -16,6 +16,13 @@ import parseTorrent from 'parse-torrent';
 import fs from 'fs';
 import crypto from 'crypto';
 
+process.on('uncaughtException', (err) => {
+  console.error('[Uncaught Exception]:', err.message, err.stack);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[Unhandled Rejection]:', reason);
+});
+
 const execPromise = util.promisify(exec);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -446,6 +453,9 @@ app.get('/api/stream', async (req, res) => {
     if (startT && startT !== '0') {
       inputArgs.push('-ss', startT);
     }
+    if (!isLocal) {
+      inputArgs.push('-reconnect', '1', '-reconnect_at_eof', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5');
+    }
 
     const ffArgs = isLocal
       ? [...inputArgs, '-i', resolvedUrl, ...vopts, ...aopts, '-avoid_negative_ts', 'make_zero', '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moof', '-']
@@ -602,14 +612,8 @@ app.get('/api/torrent/stream', async (req, res) => {
     const entry = activeTorrents.get(infoHash.toLowerCase());
     if (entry) entry.lastAccessed = Date.now();
 
-    // Call file.select() so WebTorrent actively buffers this file in the background
-    if (typeof file.select === 'function') {
-      try {
-        file.select();
-      } catch (e) {
-        console.error('[TorrentStream] Failed to select file:', e.message);
-      }
-    }
+    // We rely on file.createReadStream() below to automatically select and download
+    // only the active range of pieces at maximum priority on-demand.
 
     res.setHeader('Accept-Ranges', 'bytes');
     const mimeTypes = {
