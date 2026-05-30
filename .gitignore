@@ -10,3 +10,5 @@ data/
 !vite.config.js
 !server.js
 !app.js
+!src/**/*.js
+!src/**/*.jsx
