@@ -364,9 +364,16 @@ export default function Player({
   };
 
   const handleVideoError = async () => {
-    setIsBuffering(false);
     const video = videoRef.current;
     if (!video) return;
+
+    // Ignore aborted loads (often triggered by switching source or seeking)
+    if (video.error && video.error.code === 1) {
+      logDebug(`[Playback] Load aborted (MEDIA_ERR_ABORTED). Ignoring.`);
+      return;
+    }
+
+    setIsBuffering(false);
 
     let displayTime = video.currentTime;
     if (needsTranscode) {
@@ -419,6 +426,28 @@ export default function Player({
 
     const proxiedUrl = video.src;
     logDebug(`Video loading failed. URL: ${proxiedUrl}`);
+
+    // If we are playing an authenticated stream, check its error status directly
+    if (proxiedUrl && proxiedUrl.includes('/api/gdrive-auth-stream')) {
+      try {
+        const check = await fetch(proxiedUrl, { method: 'HEAD' }).catch(() => null);
+        if (check) {
+          if (check.status === 401) {
+            if (googleAuth) googleAuth.clearToken();
+            setVideoError({ type: 'quota', message: 'Google authentication expired or invalid. Please sign in again.' });
+            return;
+          }
+          if (check.status === 403) {
+            setVideoError({ type: 'access', message: 'Google Drive file access restricted. Ensure your Google account has access to this file.' });
+            return;
+          }
+        }
+      } catch (err) {
+        logDebug(`Auth stream HEAD check failed: ${err.message}`);
+      }
+      setVideoError({ type: 'generic', message: 'Playback of authenticated Google Drive stream failed.' });
+      return;
+    }
 
     // For Google Drive: use the lightweight /api/resolve endpoint to check error type
     // (avoids re-fetching the full stream which would hit quota again)
