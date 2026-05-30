@@ -643,6 +643,24 @@ app.get('/api/torrent/stream', async (req, res) => {
       res.setHeader('Content-Length', chunksize);
 
       console.log(`[TorrentStream] Range stream: bytes ${start}-${end}/${file.length}`);
+
+      // Calculate sliding lookahead window (64MB)
+      const fileOffset = file.offset || 0;
+      const absoluteStart = fileOffset + start;
+      const startPiece = Math.floor(absoluteStart / torrent.pieceLength);
+      const lookaheadBytes = 64 * 1024 * 1024; // 64MB lookahead
+      const endPiece = Math.min(
+        torrent.pieces.length - 1,
+        Math.floor((absoluteStart + lookaheadBytes) / torrent.pieceLength)
+      );
+
+      try {
+        torrent.deselect(0, torrent.pieces.length - 1, 1);
+        torrent.select(startPiece, endPiece, 1);
+      } catch (err) {
+        console.error('[TorrentStream] Failed to select lookahead range:', err.message);
+      }
+
       const stream = file.createReadStream({ start, end });
       
       stream.on('error', (err) => {
@@ -659,6 +677,17 @@ app.get('/api/torrent/stream', async (req, res) => {
       res.setHeader('Content-Length', file.length);
 
       console.log(`[TorrentStream] Full stream`);
+
+      // Select full file range for downloads
+      const fileOffset = file.offset || 0;
+      const startPiece = Math.floor(fileOffset / torrent.pieceLength);
+      const endPiece = Math.floor((fileOffset + file.length - 1) / torrent.pieceLength);
+      try {
+        torrent.select(startPiece, endPiece, 1);
+      } catch (err) {
+        console.error('[TorrentStream] Failed to select full file pieces:', err.message);
+      }
+
       const stream = file.createReadStream();
 
       stream.on('error', (err) => {
