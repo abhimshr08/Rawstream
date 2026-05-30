@@ -770,32 +770,39 @@ export default function Player({
         playsInline
         referrerPolicy="no-referrer"
         style={getVideoStyles()}
-          onPlay={handlePlay}
-          onPause={handlePause}
-          onEnded={handleEnded}
-          onError={handleVideoError}
-          onWaiting={() => { setIsBuffering(true); }}
-          onPlaying={() => { setIsBuffering(false); setLoaderMessage('Buffering stream...'); }}
-          onSeeking={() => { setIsBuffering(true); }}
-          onSeeked={() => { setIsBuffering(false); setLoaderMessage('Buffering stream...'); }}
-          onProgress={() => {
-            // Update buffer bar from video.buffered ranges
-            const video = videoRef.current;
-            if (!video || !video.buffered || video.buffered.length === 0) return;
-            const duration = needsTranscode ? mediaDuration : video.duration;
-            if (!duration || duration <= 0) return;
-            // Use the end of the last buffered range
-            const bufferedEnd = video.buffered.end(video.buffered.length - 1);
-            // For transcoded streams: bufferedEnd is relative to the current seek window;
-            // convert to global timeline position
-            const globalBufferedEnd = needsTranscode
-              ? transcodeStartTime + bufferedEnd
-              : bufferedEnd;
-            setBufferPercent(Math.min(100, (globalBufferedEnd / duration) * 100));
-          }}
-        >
-          Your browser does not support the video tag.
+        onPlay={handlePlay}
+        onPause={handlePause}
+        onEnded={handleEnded}
+        onError={handleVideoError}
+        onLoadedMetadata={() => {
+          // Sync duration from the video element once the browser parses stream headers.
+          // This is critical for torrent/transcoded streams where we skip pre-probing.
+          const video = videoRef.current;
+          if (video && isFinite(video.duration) && video.duration > 0 && mediaDuration === 0) {
+            setMediaDuration(video.duration);
+            logDebug(`[Player] Duration synced from stream: ${video.duration.toFixed(1)}s`);
+          }
+        }}
+        onWaiting={() => { setIsBuffering(true); }}
+        onPlaying={() => { setIsBuffering(false); setLoaderMessage('Buffering stream...'); }}
+        onSeeking={() => { setIsBuffering(true); }}
+        onSeeked={() => { setIsBuffering(false); setLoaderMessage('Buffering stream...'); }}
+        onProgress={() => {
+          // Update buffer bar from video.buffered ranges
+          const video = videoRef.current;
+          if (!video || !video.buffered || video.buffered.length === 0) return;
+          const duration = (needsTranscode ? mediaDuration : video.duration) || video.duration;
+          if (!duration || duration <= 0 || !isFinite(duration)) return;
+          const bufferedEnd = video.buffered.end(video.buffered.length - 1);
+          const globalBufferedEnd = needsTranscode
+            ? transcodeStartTime + bufferedEnd
+            : bufferedEnd;
+          setBufferPercent(Math.min(100, (globalBufferedEnd / duration) * 100));
+        }}
+      >
+        Your browser does not support the video tag.
       </video>
+
 
       {/* Play Overlay Screen Button */}
       {!isPlaying && !showPlaceholder && !videoError && !isBuffering && (

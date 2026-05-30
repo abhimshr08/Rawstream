@@ -70,11 +70,20 @@ export default function Controls({
   const handleProgressChange = (e) => {
     isDraggingProgressRef.current = false;
     const pct = parseFloat(e.target.value);
-    const duration = currentVideo?.service === 'google' 
-      ? mediaDuration 
-      : (needsTranscode ? mediaDuration : videoRef.current?.duration);
+    const video = videoRef.current;
+
+    // Get the best available duration: prefer mediaDuration (pre-probed),
+    // fall back to the live video element duration (populated once metadata loads)
+    let duration = 0;
+    if (currentVideo?.service === 'google') {
+      duration = mediaDuration || video?.duration || 0;
+    } else if (needsTranscode) {
+      duration = mediaDuration || video?.duration || 0;
+    } else {
+      duration = video?.duration || mediaDuration || 0;
+    }
     
-    if (isNaN(duration) || duration <= 0) return;
+    if (isNaN(duration) || duration <= 0 || !isFinite(duration)) return;
     const seekTime = (pct / 100) * duration;
 
     if (currentVideo?.service === 'google') {
@@ -82,7 +91,6 @@ export default function Controls({
     } else if (needsTranscode) {
       seekTranscodedStream(seekTime);
     } else {
-      const video = videoRef.current;
       if (video) video.currentTime = seekTime;
     }
   };
@@ -115,12 +123,16 @@ export default function Controls({
         displayTime = transcodeStartTime + video.currentTime;
       }
 
-      const duration = currentVideo?.service === 'google' || needsTranscode
-        ? mediaDuration
-        : video.duration;
+      // Best available duration: pre-probed mediaDuration first, then live video.duration
+      let duration = 0;
+      if (currentVideo?.service === 'google' || needsTranscode) {
+        duration = mediaDuration || video.duration || 0;
+      } else {
+        duration = video.duration || mediaDuration || 0;
+      }
 
       setCurrentTime(displayTime);
-      if (duration > 0) {
+      if (duration > 0 && isFinite(duration)) {
         setProgressPercent((displayTime / duration) * 100);
       } else {
         setProgressPercent(0);
@@ -349,9 +361,14 @@ export default function Controls({
     return () => document.removeEventListener('click', handleDocClick);
   }, []);
 
-  const totalDuration = currentVideo?.service === 'google' || needsTranscode
-    ? mediaDuration
-    : (videoRef.current?.duration || 0);
+  // Best available total duration for the time display
+  const totalDuration = (() => {
+    const video = videoRef.current;
+    if (currentVideo?.service === 'google' || needsTranscode) {
+      return mediaDuration || (video?.duration && isFinite(video.duration) ? video.duration : 0);
+    }
+    return (video?.duration && isFinite(video.duration) ? video.duration : 0) || mediaDuration;
+  })();
 
   // Gradient fill inline styling
   const maxBuffered = Math.max(progressPercent, bufferPercent || 0);
