@@ -1,31 +1,38 @@
 /**
  * useGoogleAuth — Google Identity Services OAuth2 token hook
  *
- * Requests a Google Drive read-only access_token using the implicit grant flow.
- * The token is stored in memory only (never persisted) and expires after 1 hour.
- * 
- * Usage:
- *   const { token, loading, error, requestToken, clearToken } = useGoogleAuth();
+ * Fetches the Google Client ID from /api/config at runtime (not build-time),
+ * which works correctly in Docker deployments where VITE_* env vars are
+ * injected by Render after the build step has already completed.
  */
 
-import { useState, useRef, useCallback } from 'react';
-
-// Read client ID from env (set VITE_GOOGLE_CLIENT_ID in .env / Render env vars)
-const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
+import { useState, useRef, useCallback, useEffect } from 'react';
 
 // Drive read-only scope — enough to download files the user has access to
 const SCOPE = 'https://www.googleapis.com/auth/drive.readonly';
 
 export function useGoogleAuth() {
-  const [token, setToken] = useState(null);       // active access_token string
-  const [expiry, setExpiry] = useState(0);         // token expiry timestamp (ms)
+  const [clientId, setClientId] = useState('');
+  const [token, setToken] = useState(null);
+  const [expiry, setExpiry] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-
   const tokenClientRef = useRef(null);
 
+  // Fetch client ID from server at runtime (bypasses Vite build-time limitation)
+  useEffect(() => {
+    fetch('/api/config')
+      .then(r => r.json())
+      .then(data => {
+        if (data.googleClientId) {
+          setClientId(data.googleClientId);
+        }
+      })
+      .catch(() => {}); // silent — just means button won't appear
+  }, []);
+
   // Returns true if we have a valid non-expired token
-  const isValid = token && Date.now() < expiry;
+  const isValid = !!(token && Date.now() < expiry);
 
   const requestToken = useCallback(() => {
     return new Promise((resolve, reject) => {
@@ -34,8 +41,8 @@ export function useGoogleAuth() {
         return;
       }
 
-      if (!CLIENT_ID) {
-        const msg = 'Google Client ID not configured. Set VITE_GOOGLE_CLIENT_ID env variable.';
+      if (!clientId) {
+        const msg = 'Google Client ID not configured. Set VITE_GOOGLE_CLIENT_ID in Render environment.';
         setError(msg);
         reject(new Error(msg));
         return;
@@ -51,10 +58,10 @@ export function useGoogleAuth() {
       setLoading(true);
       setError(null);
 
-      // Initialize or reuse the token client
+      // Re-create token client if clientId changed or first use
       if (!tokenClientRef.current) {
         tokenClientRef.current = window.google.accounts.oauth2.initTokenClient({
-          client_id: CLIENT_ID,
+          client_id: clientId,
           scope: SCOPE,
           callback: (response) => {
             setLoading(false);
@@ -65,7 +72,7 @@ export function useGoogleAuth() {
               return;
             }
             const accessToken = response.access_token;
-            // expires_in is typically 3600 seconds; subtract 60s buffer
+            // expires_in is typically 3600s; subtract 60s buffer
             const expiresAt = Date.now() + ((response.expires_in || 3600) - 60) * 1000;
             setToken(accessToken);
             setExpiry(expiresAt);
@@ -81,10 +88,9 @@ export function useGoogleAuth() {
         });
       }
 
-      // Prompt user to select account / grant permission
       tokenClientRef.current.requestAccessToken({ prompt: '' });
     });
-  }, [token, isValid]);
+  }, [token, isValid, clientId]);
 
   const clearToken = useCallback(() => {
     if (token && window.google?.accounts?.oauth2) {
@@ -101,6 +107,7 @@ export function useGoogleAuth() {
     loading,
     error,
     isValid,
+    isConfigured: !!clientId,  // lets UI know if button should appear
     requestToken,
     clearToken
   };

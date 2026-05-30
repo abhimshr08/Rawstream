@@ -1387,10 +1387,21 @@ app.put('/api/history/:id', async (req, res) => {
   }
 });
 
+// ─── /api/config ───────────────────────────────────────────────────────────────
+// Exposes safe runtime config to the frontend.
+// Vite build-time env vars (VITE_*) don't work in Docker since the build runs
+// before Render injects env vars. This endpoint reads them at runtime instead.
+app.get('/api/config', (_req, res) => {
+  res.json({
+    googleClientId: process.env.VITE_GOOGLE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID || ''
+  });
+});
+
 // ─── Serve Vite frontend ───────────────────────────────────────────────────────
 const distPath = path.join(__dirname, 'dist');
 app.use(express.static(distPath));
 app.get('/{*path}', (_req, res) => res.sendFile(path.join(distPath, 'index.html')));
+
 
 // ─── Start ─────────────────────────────────────────────────────────────────────
 initTools().then(() => {

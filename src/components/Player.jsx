@@ -673,7 +673,7 @@ export default function Player({
             Google Drive's anonymous download quota is exceeded. Sign in with your Google account to stream directly — no limits, fully through RawStream.
           </p>
 
-          {googleAuth && (
+          {googleAuth && googleAuth.isConfigured && (
             <div style={{ marginTop: '1.25rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.65rem' }}>
               {googleAuth.error && (
                 <p style={{ color: '#f59e0b', fontSize: '0.8rem', margin: 0 }}>{googleAuth.error}</p>
