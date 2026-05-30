@@ -482,36 +482,30 @@ export default function App() {
       }
 
       logDebug(`Selected file: "${videoFile.name}" (${(videoFile.length / 1024 / 1024).toFixed(1)} MB)`);
-      setPlayerLoaderMessage('Probing torrent media formats...');
       
       const streamUrl = `/api/torrent/stream?infoHash=${encodeURIComponent(info.infoHash)}&fileIndex=${videoFile.index}`;
       
-      // Probe torrent file
-      let resolvedDur = 0;
-      let resolvedTranscode = false;
-      let resolvedVcodec = '';
-      let resolvedAcodec = '';
-      try {
-        const probeRes = await authenticatedFetch(`/api/probe?url=${encodeURIComponent(streamUrl)}`);
-        const probeData = await probeRes.json();
-        if (probeData.error) throw new Error(probeData.error);
-        
-        resolvedDur = probeData.duration || 0;
-        resolvedTranscode = probeData.needsTranscode;
-        resolvedVcodec = probeData.videoCodec || '';
-        resolvedAcodec = probeData.audioCodec || '';
+      // Smart extension-based transcoding decision (no probe - torrent has no data yet)
+      // MP4/WebM/M4V/MOV -> browser-native, stream direct
+      // MKV/AVI/TS/OGV -> need FFmpeg transcode for browser compatibility
+      const fname = videoFile.name.toLowerCase();
+      const nativeExts = ['.mp4', '.webm', '.m4v', '.mov'];
+      const transcodeExts = ['.mkv', '.avi', '.ts', '.ogv'];
+      const isNative = nativeExts.some(e => fname.endsWith(e));
+      const needsTc = !isNative; // transcode non-native formats
+      
+      // For MKV/AVI: transcode with copy-video + transcode-audio (most MKV have h264 video, ac3/dts audio)
+      // Use aac audio transcode always for browser compat, video copy where possible
+      const resolvedVcodec = 'h264';
+      const resolvedAcodec = needsTc ? 'ac3' : 'aac';
 
-        setMediaDuration(resolvedDur);
-        setNeedsTranscode(resolvedTranscode);
-        setVcodec(resolvedVcodec);
-        setAcodec(resolvedAcodec);
-      } catch (err) {
-        logDebug(`Torrent probe skipped: fallback activated.`);
-        setNeedsTranscode(true);
-        setMediaDuration(0);
-      }
+      setMediaDuration(0); // Duration unknown until video plays
+      setNeedsTranscode(needsTc);
+      setVcodec(resolvedVcodec);
+      setAcodec(resolvedAcodec);
+      logDebug(`Torrent format: ${fname} → ${needsTc ? 'transcode (aac audio)' : 'direct stream'}`);
 
-      const finalStreamUrl = resolvedTranscode
+      const finalStreamUrl = needsTc
         ? `/api/stream?url=${encodeURIComponent(streamUrl)}&transcode=true&vcodec=${encodeURIComponent(resolvedVcodec)}&acodec=${encodeURIComponent(resolvedAcodec)}`
         : streamUrl;
 

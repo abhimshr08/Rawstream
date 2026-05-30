@@ -98,6 +98,7 @@ export default function Player({
   // Torrent Recovery tracking refs
   const recoveryAttemptsRef = useRef(0);
   const recoveryTimeRef = useRef(0);
+  const initialRetryCountRef = useRef(0); // limit initial-load retries
 
   // Format Helper
   const formatTime = (seconds) => {
@@ -374,24 +375,34 @@ export default function Player({
 
     // Torrent Auto-Recovery vs Initial Load Retry
     if (currentVideo?.service === 'torrent') {
-      // If it fails at the very start (no peer data yet), retry loading the video without resetting the torrent client
+      // If it fails at the very start (no peer data yet), retry loading the video (max 5 times)
       if (isNaN(displayTime) || displayTime <= 2) {
-        logDebug(`[Playback] Initial load stalled (waiting for peers). Retrying video load in 3s...`);
-        setIsBuffering(true);
-        setLoaderMessage('Waiting for torrent peers...');
-        
-        if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
-        seekTimeoutRef.current = setTimeout(() => {
-          const v = videoRef.current;
-          if (v && currentVideo) {
-            logDebug(`[Playback] Retrying video load...`);
-            v.load();
-            v.play().catch((err) => {
-              logDebug(`[Playback] Retry play blocked: ${err.message}`);
-            });
-          }
-        }, 3000);
-        return;
+        if (initialRetryCountRef.current < 5) {
+          initialRetryCountRef.current += 1;
+          const retryDelay = Math.min(3000 + initialRetryCountRef.current * 1000, 8000);
+          logDebug(`[Playback] Initial load stalled. Retry ${initialRetryCountRef.current}/5 in ${retryDelay/1000}s...`);
+          setIsBuffering(true);
+          setLoaderMessage(`Waiting for torrent peers... (attempt ${initialRetryCountRef.current}/5)`);
+          
+          if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
+          seekTimeoutRef.current = setTimeout(() => {
+            const v = videoRef.current;
+            if (v && currentVideo) {
+              logDebug(`[Playback] Retrying video load (attempt ${initialRetryCountRef.current})...`);
+              v.load();
+              v.play().catch((err) => {
+                logDebug(`[Playback] Retry play blocked: ${err.message}`);
+              });
+            }
+          }, retryDelay);
+          return;
+        } else {
+          // Max retries reached - show actionable error
+          logDebug('[Playback] Max initial retries reached. Torrent may have no peers or be invalid.');
+          setVideoError({ type: 'generic', message: 'Cannot connect to torrent peers. The torrent may be dead or have no seeders. Try a different magnet link.' });
+          setIsBuffering(false);
+          return;
+        }
       }
 
       // If it fails mid-playback, recover the torrent client cache on the server
@@ -409,27 +420,38 @@ export default function Player({
     const proxiedUrl = video.src;
     logDebug(`Video loading failed. URL: ${proxiedUrl}`);
 
-    if (proxiedUrl && (proxiedUrl.includes('/api/stream') || proxiedUrl.includes('/api/gdrive-stream'))) {
+    // For Google Drive: use the lightweight /api/resolve endpoint to check error type
+    // (avoids re-fetching the full stream which would hit quota again)
+    if (currentVideo?.service === 'google' && currentVideo?.id) {
       try {
-        const check = await authenticatedFetch(proxiedUrl);
-        const ct = check.headers.get('content-type') || '';
-        
-        if (!check.ok || check.status === 429 || ct.includes('application/json') || ct.includes('text/html')) {
-          const errText = await check.text();
-          let errData = {};
-          try { errData = JSON.parse(errText); } catch (e) {}
-
-          if (errData.error === 'QUOTA_EXCEEDED' || check.status === 429 || errText.includes('Quota exceeded')) {
+        const check = await authenticatedFetch(`/api/resolve?fileId=${encodeURIComponent(currentVideo.id)}`);
+        if (check.status === 429) {
+          setVideoError({ type: 'quota', message: 'Google Drive quota exceeded.' });
+          return;
+        }
+        if (check.status === 403) {
+          setVideoError({ type: 'access', message: 'File access restricted. Set sharing to "Anyone with the link can view".' });
+          return;
+        }
+      } catch (err) {
+        logDebug(`GDrive resolve check failed: ${err.message}`);
+      }
+    } else if (proxiedUrl && proxiedUrl.includes('/api/stream')) {
+      try {
+        // Use HEAD to avoid downloading data, just check status
+        const check = await authenticatedFetch(proxiedUrl, { method: 'HEAD' }).catch(() => null);
+        if (check) {
+          if (check.status === 429) {
             setVideoError({ type: 'quota', message: 'Google Drive quota exceeded.' });
             return;
           }
-          if (errData.error === 'ACCESS_DENIED' || check.status === 403 || check.status === 404 || errText.includes('sign in')) {
+          if (check.status === 403 || check.status === 404) {
             setVideoError({ type: 'access', message: 'File access restricted. Verify file sharing permissions.' });
             return;
           }
         }
       } catch (err) {
-        logDebug(`Diagnostic test failed: ${err.message}`);
+        logDebug(`Diagnostic HEAD check failed: ${err.message}`);
       }
     }
     setVideoError({ type: 'generic', message: 'Playback failed. Ensure file permissions are public.' });
@@ -516,6 +538,7 @@ export default function Player({
     setTranscodeStartTime(0);
 
     // Check if we are recovering from a previous state
+    initialRetryCountRef.current = 0; // Reset retry counter for new video
     const autoSeekTime = recoveryTimeRef.current;
     recoveryTimeRef.current = 0; // reset
 

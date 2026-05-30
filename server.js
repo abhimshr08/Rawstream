@@ -489,11 +489,20 @@ app.get('/api/stream', async (req, res) => {
     const canCopyVideo = supportedVideo.includes((vcodec || '').toLowerCase());
     const canCopyAudio = supportedAudio.includes((acodec || '').toLowerCase());
 
+    // Check if this is a torrent stream (internal localhost URL)
+    // For torrent streams: always transcode both video+audio to ensure browser compat
+    // We cannot seek into torrent streams so skip -ss, and pipe via stdin
+    const isTorrentStream = resolvedUrl.includes('127.0.0.1') && resolvedUrl.includes('/api/torrent/stream');
+
     let vopts = [];
     if (targetQuality === '720p') {
       vopts = ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-vf', 'scale=-2:720', '-pix_fmt', 'yuv420p', '-b:v', '1500k', '-maxrate', '2000k', '-bufsize', '3000k'];
     } else if (targetQuality === '480p') {
       vopts = ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-vf', 'scale=-2:480', '-pix_fmt', 'yuv420p', '-b:v', '800k', '-maxrate', '1200k', '-bufsize', '1800k'];
+    } else if (isTorrentStream) {
+      // For torrent streams: copy video if possible (saves CPU), always transcode audio
+      // We still try copy first - if the video is h264 it will work
+      vopts = ['-c:v', 'copy'];
     } else {
       // Force libx264 transcoding when seeking AND audio is being transcoded.
       // If both video and audio can be copied, copy both to keep them in sync without CPU usage.
@@ -502,9 +511,59 @@ app.get('/api/stream', async (req, res) => {
         : ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-pix_fmt', 'yuv420p'];
     }
 
-    const aopts = canCopyAudio
+    const aopts = (canCopyAudio && !isTorrentStream)
       ? ['-c:a', 'copy']
       : ['-c:a', 'aac', '-b:a', '192k', '-af', 'aresample=async=1'];
+
+    if (isTorrentStream) {
+      // Pipe torrent stream directly into FFmpeg stdin for reliability
+      // FFmpeg reads from stdin (-), which is the raw torrent file stream
+      const ffArgs = [
+        '-fflags', '+genpts',
+        '-i', 'pipe:0',   // read from stdin
+        ...vopts, ...aopts,
+        '-avoid_negative_ts', 'make_zero',
+        '-f', 'mp4',
+        '-movflags', 'empty_moov+frag_keyframe+default_base_moof',
+        '-'
+      ];
+
+      const ff = spawn(FFMPEG, ffArgs);
+      res.status(200).setHeader('Content-Type', 'video/mp4').setHeader('Cache-Control', 'no-cache');
+      ff.stdout.pipe(res);
+      ff.stderr.on('data', (d) => {
+        const msg = d.toString().trim();
+        if (!msg.includes('past duration') && !msg.includes('speed=')) {
+          console.error(`[FFmpeg Torrent Stderr]: ${msg}`);
+        }
+      });
+      ff.on('error', err => console.error('[ffmpeg torrent]', err));
+
+      // Pipe the torrent HTTP stream into FFmpeg stdin
+      try {
+        const torrentRes = await fetch(resolvedUrl, {
+          headers: { 'User-Agent': ua },
+          redirect: 'follow'
+        });
+        if (!torrentRes.ok) {
+          ff.kill('SIGKILL');
+          if (!res.headersSent) res.status(500).send('Torrent stream fetch failed: ' + torrentRes.status);
+          return;
+        }
+        Readable.fromWeb(torrentRes.body).pipe(ff.stdin);
+        ff.stdin.on('error', () => {}); // ignore stdin pipe errors on early close
+      } catch (fetchErr) {
+        console.error('[Torrent FFmpeg] Fetch error:', fetchErr.message);
+        ff.kill('SIGKILL');
+        if (!res.headersSent) res.status(500).send(fetchErr.message);
+        return;
+      }
+
+      req.on('close', () => {
+        ff.kill('SIGKILL');
+      });
+      return;
+    }
 
     const inputArgs = ['-fflags', '+genpts'];
     if (startT && startT !== '0') {
