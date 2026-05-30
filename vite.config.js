@@ -268,6 +268,87 @@ const FFPROBE = '/opt/homebrew/bin/ffprobe';
 // ─── Active yt-dlp processes (so we can kill them on client disconnect) ───────
 const activeProcesses = new Map();
 
+// Helper to get Google Drive direct download URL by parsing the warning page if necessary
+async function getGDriveDirectUrl(fileId) {
+  let currentUrl = `https://docs.google.com/uc?export=download&id=${fileId}`;
+  let cookie = '';
+  
+  const headers = {
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+  };
+
+  for (let redirectCount = 0; redirectCount < 5; redirectCount++) {
+    const reqHeaders = { ...headers };
+    if (cookie) {
+      reqHeaders['Cookie'] = cookie;
+    }
+
+    const res = await fetch(currentUrl, { headers: reqHeaders, redirect: 'manual' });
+    
+    const setCookie = res.headers.get('set-cookie');
+    if (setCookie) {
+      const newCookies = setCookie.split(',').map(c => c.split(';')[0].trim());
+      const cookieJar = {};
+      if (cookie) {
+        cookie.split(';').forEach(c => {
+          const parts = c.split('=');
+          if (parts[0]) cookieJar[parts[0].trim()] = parts.slice(1).join('=').trim();
+        });
+      }
+      newCookies.forEach(c => {
+        const parts = c.split('=');
+        if (parts[0]) cookieJar[parts[0].trim()] = parts.slice(1).join('=').trim();
+      });
+      cookie = Object.entries(cookieJar).map(([k, v]) => `${k}=${v}`).join('; ');
+    }
+
+    if (res.status === 301 || res.status === 302 || res.status === 303 || res.status === 307 || res.status === 308) {
+      const loc = res.headers.get('location');
+      if (!loc) {
+        throw new Error('Redirect without location header');
+      }
+      if (loc.startsWith('/')) {
+        const urlObj = new URL(currentUrl);
+        currentUrl = urlObj.origin + loc;
+      } else {
+        currentUrl = loc;
+      }
+      continue;
+    }
+
+    if (res.status === 200 || res.status === 206) {
+      const contentType = res.headers.get('content-type') || '';
+      
+      if (contentType.includes('text/html')) {
+        const html = await res.text();
+        
+        if (html.includes('quotaexceeded') || html.includes('Quota exceeded') || html.includes('Too many users')) {
+          throw new Error('QUOTA_EXCEEDED');
+        }
+        if (html.includes('sign in') || html.includes('Sign in') || html.includes('ACCESS_DENIED') || html.includes('private') || html.includes('access denied')) {
+          throw new Error('ACCESS_DENIED');
+        }
+
+        const confirmMatch = html.match(/name="confirm"\s+value="([^"]+)"/) || html.match(/confirm=([^&\s"]+)/);
+        const uuidMatch = html.match(/name="uuid"\s+value="([^"]+)"/) || html.match(/uuid=([^&\s"]+)/);
+
+        if (!confirmMatch || !uuidMatch) {
+          throw new Error('ACCESS_DENIED');
+        }
+
+        currentUrl = `https://drive.usercontent.google.com/download?id=${fileId}&export=download&confirm=${confirmMatch[1]}&uuid=${uuidMatch[1]}`;
+        continue;
+      } else {
+        return { url: currentUrl, cookie };
+      }
+    }
+
+    throw new Error(`Unexpected status code: ${res.status}`);
+  }
+
+  throw new Error('Too many redirects');
+}
+
 export default defineConfig({
   server: {
     port: 3000,
@@ -307,130 +388,68 @@ export default defineConfig({
               return;
             }
 
-            const driveUrl = `https://drive.google.com/file/d/${fileId}/view`;
-
-            // Optional seek offset (seconds) — use yt-dlp --download-sections for fast seeking
-            const startSec = parseFloat(reqUrl.searchParams.get('start') || '0');
+            const { url: directUrl, cookie } = await getGDriveDirectUrl(fileId);
             
-            // yt-dlp args: pipe video bytes to stdout in best MP4 format
-            // -o -                      = write to stdout
-            // -f best[ext=mp4]          = prefer native MP4 (Google transcodes MKV/HEVC server-side)
-            // --no-playlist             = treat as single file
-            // --no-part                 = no partial download temp files  
-            // --quiet                   = suppress progress noise to stderr
-            // --download-sections *T-   = start stream from T seconds (fast HTTP-range seek)
-            const ytdlpArgs = [
-              '-o', '-',
-              '--no-playlist',
-              '--no-part',
-              '--quiet',
-              '-f', 'best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best',
-            ];
-
-            // Add time-offset section if seeking
-            if (startSec > 0) {
-              // Format: *HH:MM:SS- means "from this point to the end"
-              const h = Math.floor(startSec / 3600);
-              const m = Math.floor((startSec % 3600) / 60);
-              const s = Math.floor(startSec % 60);
-              const ts = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
-              ytdlpArgs.push('--download-sections', `*${ts}-`);
-              console.log(`[GDriveStream] Seeking to ${ts} for fileId: ${fileId}`);
+            const headers = {
+              'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            };
+            if (cookie) {
+              headers['Cookie'] = cookie;
+            }
+            if (req.headers.range) {
+              headers['Range'] = req.headers.range;
             }
 
-            ytdlpArgs.push(driveUrl);
-
-            console.log(`[GDriveStream] Spawning yt-dlp for fileId: ${fileId}`);
-
-            const ytProcess = spawn(YTDLP, ytdlpArgs);
-            const processKey = `${fileId}-${Date.now()}`;
-            activeProcesses.set(processKey, ytProcess);
-
-            // Stream is raw MP4 bytes piped from yt-dlp
-            res.statusCode = 200;
-            res.setHeader('Content-Type', 'video/mp4');
-            res.setHeader('Accept-Ranges', 'none'); // yt-dlp pipe does not support ranges
-            res.setHeader('Cache-Control', 'no-cache');
-            res.setHeader('X-Content-Type-Options', 'nosniff');
-
-            ytProcess.stdout.pipe(res);
-
-            ytProcess.stderr.on('data', (data) => {
-              const msg = data.toString().trim();
-              if (msg && !msg.startsWith('WARNING:')) {
-                console.error(`[yt-dlp stderr] ${msg}`);
-              }
+            const driveRes = await fetch(directUrl, { headers, redirect: 'follow' });
+            
+            res.statusCode = driveRes.status;
+            ['content-type', 'content-length', 'content-range', 'accept-ranges', 'cache-control'].forEach(h => {
+              const v = driveRes.headers.get(h);
+              if (v) res.setHeader(h, v);
             });
-
-            ytProcess.on('error', (err) => {
-              console.error('[GDriveStream] yt-dlp process error:', err.message);
-              if (!res.headersSent) {
-                res.statusCode = 500;
-                res.end('yt-dlp error: ' + err.message);
-              }
-            });
-
-            ytProcess.on('close', (code) => {
-              activeProcesses.delete(processKey);
-              console.log(`[GDriveStream] yt-dlp exited with code ${code} for ${fileId}`);
-            });
-
-            // Kill yt-dlp when the browser disconnects (pause, seek, tab close)
-            req.on('close', () => {
-              if (!ytProcess.killed) {
-                console.log(`[GDriveStream] Client disconnected. Killing yt-dlp for ${fileId}`);
-                ytProcess.kill('SIGKILL');
-              }
-              activeProcesses.delete(processKey);
-            });
-
+            res.setHeader('Accept-Ranges', 'bytes');
+            
+            if (driveRes.body) {
+              Readable.fromWeb(driveRes.body).pipe(res);
+            } else {
+              res.end();
+            }
           } catch (err) {
-            console.error('[GDriveStream] Error:', err.message);
+            console.error('[GDriveStream Error]', err.message);
             if (!res.headersSent) {
-              res.statusCode = 500;
-              res.end('Stream error: ' + err.message);
+              if (err.message === 'QUOTA_EXCEEDED') {
+                res.statusCode = 429;
+                res.end('QUOTA_EXCEEDED');
+              } else if (err.message === 'ACCESS_DENIED') {
+                res.statusCode = 403;
+                res.end('ACCESS_DENIED');
+              } else {
+                res.statusCode = 500;
+                res.end(err.message);
+              }
             }
           }
         });
 
         // ─── /api/gdrive-meta ────────────────────────────────────────────────
-        // Fetch video duration (in seconds) for a Google Drive file using yt-dlp.
-        // Used by the frontend to show the total duration on the progress bar.
         server.middlewares.use('/api/gdrive-meta', async (req, res) => {
           res.setHeader('Content-Type', 'application/json');
           res.setHeader('Access-Control-Allow-Origin', '*');
 
-          try {
-            const reqUrl = new URL(req.url, `http://${req.headers.host || 'localhost:3000'}`);
-            const fileId = reqUrl.searchParams.get('fileId');
+          const reqUrl = new URL(req.url, `http://${req.headers.host || 'localhost:3000'}`);
+          const fileId = reqUrl.searchParams.get('fileId');
 
-            if (!fileId || !/^[a-zA-Z0-9_-]+$/.test(fileId)) {
-              res.statusCode = 400;
-              res.end(JSON.stringify({ error: 'Invalid fileId' }));
-              return;
-            }
-
-            const driveUrl = `https://drive.google.com/file/d/${fileId}/view`;
-            // --print duration outputs the video duration in seconds as a float
-            const { stdout } = await execPromise(
-              `${YTDLP} --print duration --no-playlist --quiet "${driveUrl}"`,
-              { timeout: 20000 }
-            );
-            const duration = parseFloat(stdout.trim());
-
-            res.statusCode = 200;
-            res.end(JSON.stringify({ duration: isNaN(duration) ? null : duration }));
-
-          } catch (err) {
-            console.error('[GDriveMeta] Error:', err.message);
-            res.statusCode = 500;
-            res.end(JSON.stringify({ error: err.message }));
+          if (!fileId || !/^[a-zA-Z0-9_-]+$/.test(fileId)) {
+            res.statusCode = 400;
+            res.end(JSON.stringify({ error: 'Invalid fileId' }));
+            return;
           }
+
+          res.statusCode = 200;
+          res.end(JSON.stringify({ duration: null }));
         });
 
         // ─── /api/resolve ────────────────────────────────────────────────────
-        // Lightweight endpoint: just validate the fileId and return the proxy URL.
-        // The actual streaming (and any quota handling) happens in /api/gdrive-stream.
         server.middlewares.use('/api/resolve', async (req, res) => {
           res.setHeader('Content-Type', 'application/json');
           res.setHeader('Access-Control-Allow-Origin', '*');
@@ -445,29 +464,23 @@ export default defineConfig({
               return;
             }
 
-            // Quick sanity-check: run yt-dlp --get-title to verify file is accessible
-            const driveUrl = `https://drive.google.com/file/d/${fileId}/view`;
-            try {
-              await execPromise(`${YTDLP} --get-title --no-playlist --quiet "${driveUrl}"`, { timeout: 20000 });
-            } catch (checkErr) {
-              const errMsg = checkErr.stderr || checkErr.message || '';
-              if (errMsg.includes('Private') || errMsg.includes('403') || errMsg.includes('not available')) {
-                res.statusCode = 403;
-                res.end(JSON.stringify({ error: 'File is private or restricted. Set sharing to "Anyone with the link".' }));
-                return;
-              }
-              // Allow through even if title check fails — stream will reveal real errors
-            }
-
+            await getGDriveDirectUrl(fileId);
             res.statusCode = 200;
             res.end(JSON.stringify({
               streamUrl: `/api/gdrive-stream?fileId=${encodeURIComponent(fileId)}`
             }));
-
           } catch (err) {
             console.error('[Resolve] Error:', err.message);
-            res.statusCode = 500;
-            res.end(JSON.stringify({ error: err.message }));
+            if (err.message === 'QUOTA_EXCEEDED') {
+              res.statusCode = 429;
+              res.end(JSON.stringify({ error: 'QUOTA_EXCEEDED' }));
+            } else if (err.message === 'ACCESS_DENIED') {
+              res.statusCode = 403;
+              res.end(JSON.stringify({ error: 'ACCESS_DENIED' }));
+            } else {
+              res.statusCode = 500;
+              res.end(JSON.stringify({ error: err.message }));
+            }
           }
         });
 

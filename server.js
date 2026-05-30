@@ -181,9 +181,89 @@ async function initTools() {
 // ─── App setup ─────────────────────────────────────────────────────────────────
 const app = express();
 
+// Helper to get Google Drive direct download URL by parsing the warning page if necessary
+async function getGDriveDirectUrl(fileId) {
+  let currentUrl = `https://docs.google.com/uc?export=download&id=${fileId}`;
+  let cookie = '';
+  
+  const headers = {
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+  };
+
+  for (let redirectCount = 0; redirectCount < 5; redirectCount++) {
+    const reqHeaders = { ...headers };
+    if (cookie) {
+      reqHeaders['Cookie'] = cookie;
+    }
+
+    const res = await fetch(currentUrl, { headers: reqHeaders, redirect: 'manual' });
+    
+    const setCookie = res.headers.get('set-cookie');
+    if (setCookie) {
+      const newCookies = setCookie.split(',').map(c => c.split(';')[0].trim());
+      const cookieJar = {};
+      if (cookie) {
+        cookie.split(';').forEach(c => {
+          const parts = c.split('=');
+          if (parts[0]) cookieJar[parts[0].trim()] = parts.slice(1).join('=').trim();
+        });
+      }
+      newCookies.forEach(c => {
+        const parts = c.split('=');
+        if (parts[0]) cookieJar[parts[0].trim()] = parts.slice(1).join('=').trim();
+      });
+      cookie = Object.entries(cookieJar).map(([k, v]) => `${k}=${v}`).join('; ');
+    }
+
+    if (res.status === 301 || res.status === 302 || res.status === 303 || res.status === 307 || res.status === 308) {
+      const loc = res.headers.get('location');
+      if (!loc) {
+        throw new Error('Redirect without location header');
+      }
+      if (loc.startsWith('/')) {
+        const urlObj = new URL(currentUrl);
+        currentUrl = urlObj.origin + loc;
+      } else {
+        currentUrl = loc;
+      }
+      continue;
+    }
+
+    if (res.status === 200 || res.status === 206) {
+      const contentType = res.headers.get('content-type') || '';
+      
+      if (contentType.includes('text/html')) {
+        const html = await res.text();
+        
+        if (html.includes('quotaexceeded') || html.includes('Quota exceeded') || html.includes('Too many users')) {
+          throw new Error('QUOTA_EXCEEDED');
+        }
+        if (html.includes('sign in') || html.includes('Sign in') || html.includes('ACCESS_DENIED') || html.includes('private') || html.includes('access denied')) {
+          throw new Error('ACCESS_DENIED');
+        }
+
+        const confirmMatch = html.match(/name="confirm"\s+value="([^"]+)"/) || html.match(/confirm=([^&\s"]+)/);
+        const uuidMatch = html.match(/name="uuid"\s+value="([^"]+)"/) || html.match(/uuid=([^&\s"]+)/);
+
+        if (!confirmMatch || !uuidMatch) {
+          throw new Error('ACCESS_DENIED');
+        }
+
+        currentUrl = `https://drive.usercontent.google.com/download?id=${fileId}&export=download&confirm=${confirmMatch[1]}&uuid=${uuidMatch[1]}`;
+        continue;
+      } else {
+        return { url: currentUrl, cookie };
+      }
+    }
+
+    throw new Error(`Unexpected status code: ${res.status}`);
+  }
+
+  throw new Error('Too many redirects');
+}
+
 // ─── /api/gdrive-stream ────────────────────────────────────────────────────────
-// Stream a Google Drive file using yt-dlp piped to stdout.
-// Accepts optional ?start=SECONDS for time-offset seeking.
+// Proxy Google Drive direct download stream with full HTTP Range request support
 app.get('/api/gdrive-stream', async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
@@ -191,63 +271,53 @@ app.get('/api/gdrive-stream', async (req, res) => {
 
   if (req.method === 'OPTIONS') { res.status(204).end(); return; }
 
-  const { fileId, start } = req.query;
+  const { fileId } = req.query;
   if (!fileId || !/^[a-zA-Z0-9_-]+$/.test(fileId)) {
     res.status(400).send('Missing or invalid fileId'); return;
   }
 
-  const startSec = parseFloat(start || '0');
-  const driveUrl = `https://drive.google.com/file/d/${fileId}/view`;
+  try {
+    const { url: directUrl, cookie } = await getGDriveDirectUrl(fileId);
+    
+    const headers = {
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    };
+    if (cookie) {
+      headers['Cookie'] = cookie;
+    }
+    if (req.headers.range) {
+      headers['Range'] = req.headers.range;
+    }
 
-  const ytdlpArgs = [
-    '-o', '-',
-    '--no-playlist', '--no-part', '--quiet',
-    '-f', 'best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best',
-  ];
-
-  if (startSec > 0) {
-    const h = Math.floor(startSec / 3600);
-    const m = Math.floor((startSec % 3600) / 60);
-    const s = Math.floor(startSec % 60);
-    const ts = `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
-    ytdlpArgs.push('--download-sections', `*${ts}-`);
-    console.log(`[GDriveStream] Seeking to ${ts} for ${fileId}`);
+    const driveRes = await fetch(directUrl, { headers, redirect: 'follow' });
+    
+    res.status(driveRes.status);
+    ['content-type', 'content-length', 'content-range', 'accept-ranges', 'cache-control'].forEach(h => {
+      const v = driveRes.headers.get(h);
+      if (v) res.setHeader(h, v);
+    });
+    res.setHeader('Accept-Ranges', 'bytes');
+    
+    if (driveRes.body) {
+      Readable.fromWeb(driveRes.body).pipe(res);
+    } else {
+      res.end();
+    }
+  } catch (err) {
+    console.error('[GDriveStream Error]', err.message);
+    if (!res.headersSent) {
+      if (err.message === 'QUOTA_EXCEEDED') {
+        res.status(429).send('QUOTA_EXCEEDED');
+      } else if (err.message === 'ACCESS_DENIED') {
+        res.status(403).send('ACCESS_DENIED');
+      } else {
+        res.status(500).send(err.message);
+      }
+    }
   }
-
-  ytdlpArgs.push(driveUrl);
-  console.log(`[GDriveStream] Spawning yt-dlp for fileId: ${fileId}`);
-
-  const ytProcess = spawn(YTDLP, ytdlpArgs);
-
-  res.status(200);
-  res.setHeader('Content-Type', 'video/mp4');
-  res.setHeader('Accept-Ranges', 'none');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-
-  ytProcess.stdout.pipe(res);
-
-  ytProcess.stderr.on('data', (d) => {
-    const msg = d.toString().trim();
-    if (msg && !msg.startsWith('WARNING:')) console.error(`[yt-dlp] ${msg}`);
-  });
-
-  ytProcess.on('error', (err) => {
-    console.error('[GDriveStream] yt-dlp error:', err.message);
-    if (!res.headersSent) res.status(500).send('yt-dlp error: ' + err.message);
-  });
-
-  ytProcess.on('close', (code) => {
-    console.log(`[GDriveStream] yt-dlp exited (${code}) for ${fileId}`);
-  });
-
-  req.on('close', () => {
-    if (!ytProcess.killed) ytProcess.kill('SIGKILL');
-  });
 });
 
 // ─── /api/gdrive-meta ──────────────────────────────────────────────────────────
-// Fetch video duration via yt-dlp --print duration.
 app.get('/api/gdrive-meta', async (req, res) => {
   res.setHeader('Content-Type', 'application/json');
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -257,22 +327,11 @@ app.get('/api/gdrive-meta', async (req, res) => {
     res.status(400).json({ error: 'Invalid fileId' }); return;
   }
 
-  try {
-    const driveUrl = `https://drive.google.com/file/d/${fileId}/view`;
-    const { stdout } = await execPromise(
-      `${YTDLP} --print duration --no-playlist --quiet "${driveUrl}"`,
-      { timeout: 20000 }
-    );
-    const duration = parseFloat(stdout.trim());
-    res.json({ duration: isNaN(duration) ? null : duration });
-  } catch (err) {
-    console.error('[GDriveMeta]', err.message);
-    res.status(500).json({ error: err.message });
-  }
+  // Native players will read duration directly from video metadata headers.
+  res.json({ duration: null });
 });
 
 // ─── /api/resolve ──────────────────────────────────────────────────────────────
-// Validate Drive fileId and return the proxy stream URL.
 app.get('/api/resolve', async (req, res) => {
   res.setHeader('Content-Type', 'application/json');
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -283,26 +342,18 @@ app.get('/api/resolve', async (req, res) => {
   }
 
   try {
-    const driveUrl = `https://drive.google.com/file/d/${fileId}/view`;
-    try {
-      await execPromise(`${YTDLP} --get-title --no-playlist --quiet "${driveUrl}"`, { timeout: 20000 });
-    } catch (checkErr) {
-      const msg = (checkErr.stderr || checkErr.message || '').toLowerCase();
-      if (msg.includes('private') || msg.includes('403') || msg.includes('not available') || msg.includes('unauthorized')) {
-        res.status(403).json({ error: 'ACCESS_DENIED' });
-        return;
-      }
-      if (msg.includes('429') || msg.includes('too many requests') || msg.includes('quota') || msg.includes('download quota')) {
-        res.status(429).json({ error: 'QUOTA_EXCEEDED' });
-        return;
-      }
-      res.status(500).json({ error: 'Resolve failed: ' + checkErr.message });
-      return;
-    }
+    // Validate that we can get the direct URL (checks access & quota)
+    await getGDriveDirectUrl(fileId);
     res.json({ streamUrl: `/api/gdrive-stream?fileId=${encodeURIComponent(fileId)}` });
   } catch (err) {
-    console.error('[Resolve]', err.message);
-    res.status(500).json({ error: err.message });
+    console.error('[Resolve] Failed to resolve Google Drive file:', err.message);
+    if (err.message === 'QUOTA_EXCEEDED') {
+      res.status(429).json({ error: 'QUOTA_EXCEEDED' });
+    } else if (err.message === 'ACCESS_DENIED') {
+      res.status(403).json({ error: 'ACCESS_DENIED' });
+    } else {
+      res.status(500).json({ error: err.message });
+    }
   }
 });
 
