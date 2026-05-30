@@ -366,20 +366,43 @@ export default function Player({
     const video = videoRef.current;
     if (!video) return;
 
-    // Torrent Auto-Recovery mechanism
-    if (currentVideo?.service === 'torrent' && recoveryAttemptsRef.current < 1 && onRecoverTorrent) {
-      let displayTime = video.currentTime;
-      if (needsTranscode) {
-        displayTime = transcodeStartTime + video.currentTime;
-      }
-      
-      recoveryAttemptsRef.current += 1;
-      recoveryTimeRef.current = !isNaN(displayTime) && displayTime > 0 ? displayTime : 0;
+    let displayTime = video.currentTime;
+    if (needsTranscode) {
+      displayTime = transcodeStartTime + video.currentTime;
+    }
 
-      logDebug(`[Recovery] Torrent playback failed. Auto-recovering torrent cache on server at timestamp ${formatTime(recoveryTimeRef.current)}...`);
-      addToast('Reconnecting to torrent cache...', 'info');
-      onRecoverTorrent(currentVideo.originalUrl);
-      return;
+    // Torrent Auto-Recovery vs Initial Load Retry
+    if (currentVideo?.service === 'torrent') {
+      // If it fails at the very start (no peer data yet), retry loading the video without resetting the torrent client
+      if (isNaN(displayTime) || displayTime <= 2) {
+        logDebug(`[Playback] Initial load stalled (waiting for peers). Retrying video load in 3s...`);
+        setIsBuffering(true);
+        setLoaderMessage('Waiting for torrent peers...');
+        
+        if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
+        seekTimeoutRef.current = setTimeout(() => {
+          const v = videoRef.current;
+          if (v && currentVideo) {
+            logDebug(`[Playback] Retrying video load...`);
+            v.load();
+            v.play().catch((err) => {
+              logDebug(`[Playback] Retry play blocked: ${err.message}`);
+            });
+          }
+        }, 3000);
+        return;
+      }
+
+      // If it fails mid-playback, recover the torrent client cache on the server
+      if (recoveryAttemptsRef.current < 1 && onRecoverTorrent) {
+        recoveryAttemptsRef.current += 1;
+        recoveryTimeRef.current = !isNaN(displayTime) && displayTime > 0 ? displayTime : 0;
+
+        logDebug(`[Recovery] Torrent playback failed mid-stream. Auto-recovering torrent cache on server at timestamp ${formatTime(recoveryTimeRef.current)}...`);
+        addToast('Reconnecting to torrent cache...', 'info');
+        onRecoverTorrent(currentVideo.originalUrl);
+        return;
+      }
     }
 
     const proxiedUrl = video.src;
