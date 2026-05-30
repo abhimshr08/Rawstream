@@ -364,6 +364,16 @@ export default function App() {
       } catch (err) {
         logDebug(`Google Drive stream resolution failed: ${err.message}`);
         addToast('Google Drive stream failed to resolve.', 'error');
+        
+        const videoObj = {
+          id: fileId,
+          title: `Google Drive Stream`,
+          originalUrl: url,
+          service,
+          error: err.message || 'RESOLVE_FAILED',
+          timestamp: Date.now()
+        };
+        setCurrentVideo(videoObj);
         setPlayerLoading(false);
         setPlayerLoaderMessage('');
       }

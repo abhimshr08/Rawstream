@@ -408,7 +408,7 @@ export default function Player({
     const proxiedUrl = video.src;
     logDebug(`Video loading failed. URL: ${proxiedUrl}`);
 
-    if (proxiedUrl && proxiedUrl.includes('/api/stream')) {
+    if (proxiedUrl && (proxiedUrl.includes('/api/stream') || proxiedUrl.includes('/api/gdrive-stream'))) {
       try {
         const check = await authenticatedFetch(proxiedUrl);
         const ct = check.headers.get('content-type') || '';
@@ -494,6 +494,19 @@ export default function Player({
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !currentVideo) return;
+
+    if (currentVideo.error) {
+      setShowPlaceholder(false);
+      if (currentVideo.error === 'QUOTA_EXCEEDED') {
+        setVideoError({ type: 'quota', message: 'Google Drive quota exceeded.' });
+      } else if (currentVideo.error === 'ACCESS_DENIED') {
+        setVideoError({ type: 'access', message: 'File access restricted. Verify file sharing permissions.' });
+      } else {
+        setVideoError({ type: 'generic', message: currentVideo.error });
+      }
+      setIsBuffering(false);
+      return;
+    }
 
     setShowPlaceholder(false);
     setVideoError(null);

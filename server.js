@@ -288,10 +288,16 @@ app.get('/api/resolve', async (req, res) => {
       await execPromise(`${YTDLP} --get-title --no-playlist --quiet "${driveUrl}"`, { timeout: 20000 });
     } catch (checkErr) {
       const msg = (checkErr.stderr || checkErr.message || '').toLowerCase();
-      if (msg.includes('private') || msg.includes('403') || msg.includes('not available')) {
-        res.status(403).json({ error: 'File is private or restricted. Set sharing to "Anyone with the link".' });
+      if (msg.includes('private') || msg.includes('403') || msg.includes('not available') || msg.includes('unauthorized')) {
+        res.status(403).json({ error: 'ACCESS_DENIED' });
         return;
       }
+      if (msg.includes('429') || msg.includes('too many requests') || msg.includes('quota') || msg.includes('download quota')) {
+        res.status(429).json({ error: 'QUOTA_EXCEEDED' });
+        return;
+      }
+      res.status(500).json({ error: 'Resolve failed: ' + checkErr.message });
+      return;
     }
     res.json({ streamUrl: `/api/gdrive-stream?fileId=${encodeURIComponent(fileId)}` });
   } catch (err) {
