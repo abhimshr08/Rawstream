@@ -34,6 +34,7 @@ export default function Player({
   const [videoError, setVideoError] = useState(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isTheater, setIsTheater] = useState(false);
+  const [useEmbed, setUseEmbed] = useState(false);
 
   // Synchronize native fullscreen changes
   useEffect(() => {
@@ -492,6 +493,7 @@ export default function Player({
 
   // Watch currentVideo changes to load source
   useEffect(() => {
+    setUseEmbed(false); // Reset embed player state when video changes!
     const video = videoRef.current;
     if (!video || !currentVideo) return;
 
@@ -637,7 +639,7 @@ export default function Player({
       )}
 
       {/* Google Drive Quota Screen */}
-      {videoError?.type === 'quota' && (
+      {videoError?.type === 'quota' && !useEmbed && (
         <div className="player-placeholder">
           <svg viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="1.5" style={{ width: '64px', height: '64px', marginBottom: '1rem' }}>
             <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
@@ -648,13 +650,34 @@ export default function Player({
           <p style={{ maxWidth: '440px', margin: '0.5rem auto', color: 'rgba(255,255,255,0.7)' }}>
             Google Drive download quota is exceeded for this file.
           </p>
-          <div style={{ background: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.2)', borderRadius: '8px', padding: '0.85rem', marginTop: '1.2rem', fontSize: '0.85rem', maxWidth: '450px', textAlign: 'left', lineHeight: '1.6', color: 'rgba(255,255,255,0.85)' }}>
-            <strong style={{ color: '#ef4444', display: 'block', marginBottom: '0.4rem' }}>How to bypass quota limit:</strong>
-            <ol style={{ margin: '0', paddingLeft: '1.2rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-              <li>Open the file in Google Drive.</li>
-              <li>Sign in and click <strong>"Make a copy"</strong> (or add a shortcut).</li>
-              <li>Open the copy, set General Access to <strong>"Anyone with the link"</strong>, and load the new link here to play instantly.</li>
-            </ol>
+          <div style={{ background: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.2)', borderRadius: '8px', padding: '0.85rem', marginTop: '1.2rem', fontSize: '0.85rem', maxWidth: '450px', textAlign: 'left', lineHeight: '1.6', color: 'rgba(255,255,255,0.85)', display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+            <div>
+              <strong style={{ color: '#ef4444', display: 'block', marginBottom: '0.4rem' }}>Direct Streaming Blocked:</strong>
+              Google blocks anonymous downloads once a file hits its traffic limit. You can bypass this by streaming authenticated through Google's official preview player inside RawStream.
+            </div>
+            
+            <button 
+              type="button" 
+              onClick={() => {
+                setShowPlaceholder(false);
+                setUseEmbed(true);
+              }}
+              style={{
+                background: 'var(--accent-primary)',
+                border: 'none',
+                color: 'white',
+                padding: '0.5rem 1rem',
+                borderRadius: '6px',
+                fontWeight: '600',
+                cursor: 'pointer',
+                fontSize: '0.85rem',
+                marginTop: '0.25rem',
+                alignSelf: 'flex-start',
+                transition: 'background 0.2s'
+              }}
+            >
+              Play via Google Drive Embedded Player
+            </button>
           </div>
         </div>
       )}
@@ -685,43 +708,55 @@ export default function Player({
         </div>
       )}
 
-      {/* Video element */}
-      <video
-        ref={videoRef}
-        id="video-element"
-        preload="auto"
-        playsInline
-        referrerPolicy="no-referrer"
-        style={getVideoStyles()}
-        onPlay={handlePlay}
-        onPause={handlePause}
-        onEnded={handleEnded}
-        onError={handleVideoError}
-        onWaiting={() => { setIsBuffering(true); }}
-        onPlaying={() => { setIsBuffering(false); setLoaderMessage('Buffering stream...'); }}
-        onSeeking={() => { setIsBuffering(true); }}
-        onSeeked={() => { setIsBuffering(false); setLoaderMessage('Buffering stream...'); }}
-        onProgress={() => {
-          // Update buffer bar from video.buffered ranges
-          const video = videoRef.current;
-          if (!video || !video.buffered || video.buffered.length === 0) return;
-          const duration = needsTranscode ? mediaDuration : video.duration;
-          if (!duration || duration <= 0) return;
-          // Use the end of the last buffered range
-          const bufferedEnd = video.buffered.end(video.buffered.length - 1);
-          // For transcoded streams: bufferedEnd is relative to the current seek window;
-          // convert to global timeline position
-          const globalBufferedEnd = needsTranscode
-            ? transcodeStartTime + bufferedEnd
-            : bufferedEnd;
-          setBufferPercent(Math.min(100, (globalBufferedEnd / duration) * 100));
-        }}
-      >
-        Your browser does not support the video tag.
-      </video>
+      {/* Video element or Google Drive preview iframe fallback */}
+      {useEmbed ? (
+        <iframe
+          src={`https://drive.google.com/file/d/${currentVideo.id}/preview`}
+          width="100%"
+          height="100%"
+          style={{ border: 'none', borderRadius: '12px', background: 'black', position: 'relative', zIndex: 10 }}
+          allow="autoplay; encrypted-media; picture-in-picture"
+          allowFullScreen
+          title="Google Drive Embedded Player"
+        />
+      ) : (
+        <video
+          ref={videoRef}
+          id="video-element"
+          preload="auto"
+          playsInline
+          referrerPolicy="no-referrer"
+          style={getVideoStyles()}
+          onPlay={handlePlay}
+          onPause={handlePause}
+          onEnded={handleEnded}
+          onError={handleVideoError}
+          onWaiting={() => { setIsBuffering(true); }}
+          onPlaying={() => { setIsBuffering(false); setLoaderMessage('Buffering stream...'); }}
+          onSeeking={() => { setIsBuffering(true); }}
+          onSeeked={() => { setIsBuffering(false); setLoaderMessage('Buffering stream...'); }}
+          onProgress={() => {
+            // Update buffer bar from video.buffered ranges
+            const video = videoRef.current;
+            if (!video || !video.buffered || video.buffered.length === 0) return;
+            const duration = needsTranscode ? mediaDuration : video.duration;
+            if (!duration || duration <= 0) return;
+            // Use the end of the last buffered range
+            const bufferedEnd = video.buffered.end(video.buffered.length - 1);
+            // For transcoded streams: bufferedEnd is relative to the current seek window;
+            // convert to global timeline position
+            const globalBufferedEnd = needsTranscode
+              ? transcodeStartTime + bufferedEnd
+              : bufferedEnd;
+            setBufferPercent(Math.min(100, (globalBufferedEnd / duration) * 100));
+          }}
+        >
+          Your browser does not support the video tag.
+        </video>
+      )}
 
       {/* Play Overlay Screen Button */}
-      {!isPlaying && !showPlaceholder && !videoError && !isBuffering && (
+      {!isPlaying && !showPlaceholder && !videoError && !isBuffering && !useEmbed && (
         <div id="play-overlay" className="play-overlay" onClick={togglePlay}>
           <button className="large-play-btn" aria-label="Play">
             <svg viewBox="0 0 24 24" fill="currentColor">
@@ -732,7 +767,7 @@ export default function Player({
       )}
 
       {/* Controls Overlay */}
-      {!showPlaceholder && (
+      {!showPlaceholder && !useEmbed && (
         <Controls 
           show={showControls || !isPlaying}
           videoRef={videoRef}
@@ -772,24 +807,29 @@ export default function Player({
             <FileVideo size={12} />
             <span>{currentVideo.service}</span>
           </div>
-          {mediaDuration > 0 && (
+          {useEmbed && (
+            <div className="metadata-badge secondary" style={{ color: 'var(--accent-secondary)' }}>
+              <span>Google Embed Mode (Authenticated)</span>
+            </div>
+          )}
+          {mediaDuration > 0 && !useEmbed && (
             <div className="metadata-badge">
               <span>{formatTime(mediaDuration)}</span>
             </div>
           )}
-          {needsTranscode && (
+          {needsTranscode && !useEmbed && (
             <div className="metadata-badge secondary">
               <AlertTriangle size={12} />
               <span>Transcoded ({vcodec || 'HEVC'} → H.264)</span>
             </div>
           )}
-          {!needsTranscode && (
+          {!needsTranscode && !useEmbed && (
             <div className="metadata-badge">
               <Check size={12} />
               <span>Direct Stream (Natively Supported)</span>
             </div>
           )}
-          {selectedQuality !== 'original' && (
+          {selectedQuality !== 'original' && !useEmbed && (
             <div className="metadata-badge secondary">
               <span>Preset: {selectedQuality}</span>
             </div>
