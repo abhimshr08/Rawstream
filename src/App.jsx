@@ -585,8 +585,21 @@ export default function App() {
             loadTorrent(buffer);
           };
           reader.readAsArrayBuffer(file);
+        } else if (file.type.startsWith('video/') || ['.mp4', '.mkv', '.mov', '.webm', '.avi'].some(ext => file.name.toLowerCase().endsWith(ext))) {
+          logDebug(`Local video dropped: ${file.name}`);
+          addToast(`Loading local file: ${file.name}`, 'info');
+          const localUrl = URL.createObjectURL(file);
+          const videoObj = {
+            id: 'local_' + Date.now(),
+            title: file.name,
+            originalUrl: localUrl,
+            streamUrl: localUrl,
+            service: 'local',
+            timestamp: Date.now()
+          };
+          setCurrentVideo(videoObj);
         } else {
-          addToast('Please drop a valid .torrent file.', 'error');
+          addToast('Please drop a valid .torrent or video file.', 'error');
         }
       }
     }}>
@@ -660,7 +673,7 @@ export default function App() {
                   type="text" 
                   value={streamUrlInput}
                   onChange={(e) => handleUrlInputChange(e.target.value)}
-                  placeholder="Paste cloud link, magnet URI, or drop .torrent..." 
+                  placeholder="Paste cloud link, magnet, or drop video/.torrent file..." 
                   required 
                   autoComplete="off"
                   aria-label="Video or Torrent Link"
@@ -691,7 +704,7 @@ export default function App() {
                 </div>
               )}
               <div className="drag-drop-hint">
-                <span>Or drag & drop a <strong>.torrent</strong> file here</span>
+                <span>Or drag & drop a <strong>.torrent</strong> or <strong>video file</strong> here</span>
               </div>
             </div>
           </section>

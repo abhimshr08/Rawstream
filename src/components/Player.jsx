@@ -632,7 +632,7 @@ export default function Player({
             <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
           </svg>
           <h3>Awaiting Video Stream</h3>
-          <p>Paste a cloud sharing link or drag a torrent file above to begin streaming.</p>
+          <p>Paste a cloud sharing link, drag a torrent, or drop a local video file here to play instantly.</p>
         </div>
       )}
 
