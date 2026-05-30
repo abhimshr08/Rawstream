@@ -645,7 +645,17 @@ export default function Player({
             <line x1="12" y1="17" x2="12.01" y2="17" />
           </svg>
           <h3 style={{ color: '#ef4444' }}>Quota Exceeded</h3>
-          <p style={{ maxWidth: '440px', margin: '0.5rem auto' }}>Google Drive download quota is exceeded for this file. Try loading via Puppeteer resolver route.</p>
+          <p style={{ maxWidth: '440px', margin: '0.5rem auto', color: 'rgba(255,255,255,0.7)' }}>
+            Google Drive download quota is exceeded for this file.
+          </p>
+          <div style={{ background: 'rgba(239, 68, 68, 0.08)', border: '1px solid rgba(239, 68, 68, 0.2)', borderRadius: '8px', padding: '0.85rem', marginTop: '1.2rem', fontSize: '0.85rem', maxWidth: '450px', textAlign: 'left', lineHeight: '1.6', color: 'rgba(255,255,255,0.85)' }}>
+            <strong style={{ color: '#ef4444', display: 'block', marginBottom: '0.4rem' }}>How to bypass quota limit:</strong>
+            <ol style={{ margin: '0', paddingLeft: '1.2rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+              <li>Open the file in Google Drive.</li>
+              <li>Sign in and click <strong>"Make a copy"</strong> (or add a shortcut).</li>
+              <li>Open the copy, set General Access to <strong>"Anyone with the link"</strong>, and load the new link here to play instantly.</li>
+            </ol>
+          </div>
         </div>
       )}
 
