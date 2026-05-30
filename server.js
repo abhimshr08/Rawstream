@@ -26,6 +26,23 @@ process.on('unhandledRejection', (reason) => {
 const execPromise = util.promisify(exec);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// Load local .env file if it exists (for local development, as dotenv is not installed)
+const envPath = path.join(__dirname, '.env');
+if (fs.existsSync(envPath)) {
+  const envContent = fs.readFileSync(envPath, 'utf8');
+  envContent.split('\n').forEach(line => {
+    const trimmed = line.trim();
+    if (trimmed && !trimmed.startsWith('#')) {
+      const parts = trimmed.split('=');
+      const key = parts[0].trim();
+      const val = parts.slice(1).join('=').trim().replace(/^['"]|['"]$/g, '');
+      if (key) {
+        process.env[key] = val;
+      }
+    }
+  });
+}
+
 const PORT = process.env.PORT || 3000;
 
 // ─── Torrent Manager ───────────────────────────────────────────────────────────
@@ -338,7 +355,8 @@ app.get('/api/gdrive-auth-stream', async (req, res) => {
 
   try {
     // Drive API v3 — authenticated download (no anonymous quota limits)
-    const driveApiUrl = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`;
+    // We append acknowledgeAbuse=true to bypass the 403 error on large files that Google cannot scan for viruses.
+    const driveApiUrl = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true&acknowledgeAbuse=true`;
 
     const headers = {
       'Authorization': `Bearer ${token}`,
@@ -353,13 +371,15 @@ app.get('/api/gdrive-auth-stream', async (req, res) => {
     if (driveRes.status === 401) {
       res.status(401).send('TOKEN_EXPIRED'); return;
     }
-    if (driveRes.status === 403) {
-      res.status(403).send('ACCESS_DENIED'); return;
-    }
     if (!driveRes.ok) {
       const errText = await driveRes.text();
-      console.error('[GDriveAuth] Drive API error:', driveRes.status, errText.slice(0, 200));
-      res.status(driveRes.status).send(`Drive API error: ${driveRes.status}`); return;
+      console.error('[GDriveAuth] Drive API error:', driveRes.status, errText.slice(0, 500));
+      if (driveRes.status === 403) {
+        res.status(403).send('ACCESS_DENIED');
+      } else {
+        res.status(driveRes.status).send(`Drive API error: ${driveRes.status}`);
+      }
+      return;
     }
 
     res.status(driveRes.status);
