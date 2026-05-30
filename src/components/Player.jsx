@@ -18,7 +18,8 @@ export default function Player({
   logDebug,
   playerLoading,
   playerLoaderMessage,
-  onRecoverTorrent
+  onRecoverTorrent,
+  googleAuth            // { token, loading, error, requestToken, clearToken }
 }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -669,8 +670,69 @@ export default function Player({
           </svg>
           <h3 style={{ color: '#ef4444' }}>Quota Exceeded</h3>
           <p style={{ maxWidth: '440px', margin: '0.5rem auto', color: 'rgba(255,255,255,0.7)' }}>
-            Google Drive's anonymous download quota is exceeded for this file. Try again later or use a different source.
+            Google Drive's anonymous download quota is exceeded. Sign in with your Google account to stream directly — no limits, fully through RawStream.
           </p>
+
+          {googleAuth && (
+            <div style={{ marginTop: '1.25rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.65rem' }}>
+              {googleAuth.error && (
+                <p style={{ color: '#f59e0b', fontSize: '0.8rem', margin: 0 }}>{googleAuth.error}</p>
+              )}
+              <button
+                type="button"
+                disabled={googleAuth.loading}
+                onClick={async () => {
+                  try {
+                    addToast('Signing in with Google...', 'info');
+                    const accessToken = await googleAuth.requestToken();
+                    // Switch video to authenticated stream endpoint
+                    const authStreamUrl = `/api/gdrive-auth-stream?fileId=${encodeURIComponent(currentVideo.id)}&token=${encodeURIComponent(accessToken)}`;
+                    logDebug('[GDrive] Switching to authenticated stream after quota bypass...');
+                    setVideoError(null);
+                    setShowPlaceholder(false);
+                    setIsBuffering(true);
+                    setLoaderMessage('Loading authenticated stream...');
+                    const video = videoRef.current;
+                    if (video) {
+                      video.src = authStreamUrl;
+                      video.load();
+                      video.play().catch(err => logDebug(`Auth stream play blocked: ${err.message}`));
+                    }
+                  } catch (err) {
+                    addToast(`Google sign-in failed: ${err.message}`, 'error');
+                    logDebug(`[GDrive] Google sign-in failed: ${err.message}`);
+                  }
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.5rem',
+                  background: 'white',
+                  color: '#1a1a1a',
+                  border: 'none',
+                  borderRadius: '8px',
+                  padding: '0.6rem 1.25rem',
+                  fontWeight: '600',
+                  fontSize: '0.9rem',
+                  cursor: googleAuth.loading ? 'wait' : 'pointer',
+                  opacity: googleAuth.loading ? 0.7 : 1,
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+                  transition: 'all 0.2s'
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 48 48">
+                  <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+                  <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+                  <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+                  <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+                </svg>
+                {googleAuth.loading ? 'Signing in...' : 'Stream with Google Account'}
+              </button>
+              <p style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.4)', margin: 0 }}>
+                One-click sign-in · RawStream streams directly · no data stored
+              </p>
+            </div>
+          )}
         </div>
       )}
 

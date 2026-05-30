@@ -317,6 +317,72 @@ app.get('/api/gdrive-stream', async (req, res) => {
   }
 });
 
+// ─── /api/gdrive-auth-stream ───────────────────────────────────────────────────
+// Authenticated Drive API v3 stream — bypasses anonymous quota limits.
+// Requires a valid Google OAuth2 access_token passed as ?token=...
+// The token is obtained client-side via Google Identity Services.
+app.get('/api/gdrive-auth-stream', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type');
+
+  if (req.method === 'OPTIONS') { res.status(204).end(); return; }
+
+  const { fileId, token } = req.query;
+  if (!fileId || !/^[a-zA-Z0-9_-]+$/.test(fileId)) {
+    res.status(400).send('Missing or invalid fileId'); return;
+  }
+  if (!token || token.length < 20) {
+    res.status(401).send('Missing or invalid access token'); return;
+  }
+
+  try {
+    // Drive API v3 — authenticated download (no anonymous quota limits)
+    const driveApiUrl = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media&supportsAllDrives=true`;
+
+    const headers = {
+      'Authorization': `Bearer ${token}`,
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+    };
+    if (req.headers.range) {
+      headers['Range'] = req.headers.range;
+    }
+
+    const driveRes = await fetch(driveApiUrl, { headers, redirect: 'follow' });
+
+    if (driveRes.status === 401) {
+      res.status(401).send('TOKEN_EXPIRED'); return;
+    }
+    if (driveRes.status === 403) {
+      res.status(403).send('ACCESS_DENIED'); return;
+    }
+    if (!driveRes.ok) {
+      const errText = await driveRes.text();
+      console.error('[GDriveAuth] Drive API error:', driveRes.status, errText.slice(0, 200));
+      res.status(driveRes.status).send(`Drive API error: ${driveRes.status}`); return;
+    }
+
+    res.status(driveRes.status);
+    ['content-type', 'content-length', 'content-range', 'accept-ranges', 'cache-control'].forEach(h => {
+      const v = driveRes.headers.get(h);
+      if (v) res.setHeader(h, v);
+    });
+    res.setHeader('Accept-Ranges', 'bytes');
+
+    if (driveRes.body) {
+      Readable.fromWeb(driveRes.body).pipe(res);
+    } else {
+      res.end();
+    }
+  } catch (err) {
+    console.error('[GDriveAuthStream Error]', err.message);
+    if (!res.headersSent) {
+      res.status(500).send(err.message);
+    }
+  }
+});
+
+
 // ─── /api/gdrive-meta ──────────────────────────────────────────────────────────
 app.get('/api/gdrive-meta', async (req, res) => {
   res.setHeader('Content-Type', 'application/json');

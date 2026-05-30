@@ -11,6 +11,8 @@ import AdminDashboard from './components/AdminDashboard';
 import AuthOverlay from './components/AuthOverlay';
 import DebugPanel from './components/DebugPanel';
 import TorrentStats from './components/TorrentStats';
+import { useGoogleAuth } from './hooks/useGoogleAuth';
+
 
 export default function App() {
   // Authentication State
@@ -20,6 +22,9 @@ export default function App() {
     isAdmin: localStorage.getItem('rawstream_session_is_admin') === 'true'
   });
   const [showAuth, setShowAuth] = useState(!session.token);
+
+  // Google OAuth (for quota-exceeded Drive files)
+  const googleAuth = useGoogleAuth();
 
   // Layout State
   const [showHistory, setShowHistory] = useState(true);
@@ -53,6 +58,7 @@ export default function App() {
 
   // References
   const debugLogsEndRef = useRef(null);
+
 
   // Helpers
   const addToast = (message, type = 'info') => {
@@ -721,6 +727,7 @@ export default function App() {
             playerLoading={playerLoading}
             playerLoaderMessage={playerLoaderMessage}
             onRecoverTorrent={loadTorrent}
+            googleAuth={googleAuth}
           />
 
           {/* Torrent downloading status details card */}
