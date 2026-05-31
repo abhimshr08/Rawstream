@@ -246,6 +246,10 @@ async function getGDriveDirectUrl(fileId) {
       continue;
     }
 
+    if (res.status === 404) {
+      throw new Error('NOT_FOUND');
+    }
+
     if (res.status === 200 || res.status === 206) {
       const contentType = res.headers.get('content-type') || '';
       
@@ -327,6 +331,8 @@ app.get('/api/gdrive-stream', async (req, res) => {
         res.status(429).send('QUOTA_EXCEEDED');
       } else if (err.message === 'ACCESS_DENIED') {
         res.status(403).send('ACCESS_DENIED');
+      } else if (err.message === 'NOT_FOUND') {
+        res.status(404).send('NOT_FOUND');
       } else {
         res.status(500).send(err.message);
       }
@@ -437,6 +443,8 @@ app.get('/api/resolve', async (req, res) => {
       res.status(429).json({ error: 'QUOTA_EXCEEDED' });
     } else if (err.message === 'ACCESS_DENIED') {
       res.status(403).json({ error: 'ACCESS_DENIED' });
+    } else if (err.message === 'NOT_FOUND') {
+      res.status(404).json({ error: 'NOT_FOUND' });
     } else {
       res.status(500).json({ error: err.message });
     }
@@ -603,9 +611,10 @@ app.get('/api/stream', async (req, res) => {
 
     if (isTorrentStream) {
       // Pipe torrent stream directly into FFmpeg stdin for reliability
-      // FFmpeg reads from stdin (-), which is the raw torrent file stream
+      // Use input seeking so transcoded torrent streams can honor seek requests.
       const ffArgs = [
         '-fflags', '+genpts',
+        ...(startT && startT !== '0' ? ['-ss', startT] : []),
         '-i', 'pipe:0',   // read from stdin
         ...vopts, ...aopts,
         '-avoid_negative_ts', 'make_zero',
@@ -789,6 +798,33 @@ app.get('/api/torrent/status', (req, res) => {
     downloaded: torrent.downloaded,
     length: torrent.length
   });
+});
+
+// ─── /api/torrent/reset ─────────────────────────────────────────────────────────
+app.get('/api/torrent/reset', (req, res) => {
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+
+  const { infoHash } = req.query;
+  if (!infoHash || !/^[a-fA-F0-9]{40}$/.test(infoHash)) {
+    res.status(400).json({ error: 'Missing or invalid infoHash' });
+    return;
+  }
+
+  const entry = activeTorrents.get(infoHash.toLowerCase());
+  if (!entry) {
+    res.status(404).json({ error: 'Torrent not active or cached' });
+    return;
+  }
+
+  try {
+    entry.torrent.destroy();
+    activeTorrents.delete(infoHash.toLowerCase());
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[TorrentReset Error]', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ─── /api/torrent/stream ───────────────────────────────────────────────────────

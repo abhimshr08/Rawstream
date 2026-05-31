@@ -1342,6 +1342,50 @@ body {
     gap: 0.85rem;
   }
 }
+/* Torrent Files Explorer Styles */
+.torrent-files-card {
+  padding: 1.25rem;
+  background: rgba(16, 18, 27, 0.45);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--border-radius-md);
+  transition: var(--transition-smooth);
+}
+
+.torrent-files-card .files-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.torrent-files-card .files-list::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 4px;
+}
+
+.torrent-files-card .files-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+
+.torrent-files-card .files-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.file-row:hover {
+  background: rgba(255, 255, 255, 0.04) !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+.file-row.active:hover {
+  background: rgba(99, 102, 241, 0.12) !important;
+  border-color: rgba(99, 102, 241, 0.4) !important;
+}
+
+.btn-action:hover {
+  background: rgba(255, 255, 255, 0.12) !important;
+}
+
+.btn-action.stream:hover:not(:disabled) {
+  background: rgba(99, 102, 241, 0.3) !important;
+}
 
 .stat-item {
   display: flex;

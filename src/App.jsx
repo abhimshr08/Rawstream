@@ -11,6 +11,7 @@ import AdminDashboard from './components/AdminDashboard';
 import AuthOverlay from './components/AuthOverlay';
 import DebugPanel from './components/DebugPanel';
 import TorrentStats from './components/TorrentStats';
+import TorrentFilesExplorer from './components/TorrentFilesExplorer';
 import { useGoogleAuth } from './hooks/useGoogleAuth';
 
 
@@ -54,6 +55,7 @@ export default function App() {
   
   // Torrent Stats
   const [torrentStats, setTorrentStats] = useState(null); // { name, speed, peers, progress }
+  const [activeTorrentInfo, setActiveTorrentInfo] = useState(null);
   const torrentPollInterval = useRef(null);
 
   // References
@@ -302,6 +304,7 @@ export default function App() {
     clearTorrentPolling();
     setTorrentStats(null);
     setSelectedQuality('original');
+    setActiveTorrentInfo(null);
     
     const service = detectService(url);
     if (service === 'torrent') {
@@ -470,6 +473,7 @@ export default function App() {
       const info = await res.json();
       if (!res.ok || info.error) throw new Error(info.error || 'Torrent failed');
 
+      setActiveTorrentInfo(info);
       logDebug(`Torrent loaded: "${info.name}" (${info.files.length} files)`);
       setPlayerLoaderMessage('Selecting playable video file...');
 
@@ -535,6 +539,45 @@ export default function App() {
       setPlayerLoading(false);
       setPlayerLoaderMessage('');
     }
+  };
+
+  const selectTorrentFile = (info, file) => {
+    logDebug(`Switching to torrent file: "${file.name}" (${(file.length / 1024 / 1024).toFixed(1)} MB)`);
+    setPlayerLoading(true);
+    setPlayerLoaderMessage('Preparing selected torrent file...');
+
+    const streamUrl = `/api/torrent/stream?infoHash=${encodeURIComponent(info.infoHash)}&fileIndex=${file.index}`;
+    
+    const fname = file.name.toLowerCase();
+    const nativeExts = ['.mp4', '.webm', '.m4v', '.mov'];
+    const isNative = nativeExts.some(e => fname.endsWith(e));
+    const needsTc = !isNative;
+    
+    const resolvedVcodec = 'h264';
+    const resolvedAcodec = needsTc ? 'ac3' : 'aac';
+
+    setMediaDuration(0);
+    setNeedsTranscode(needsTc);
+    setVcodec(resolvedVcodec);
+    setAcodec(resolvedAcodec);
+    logDebug(`Torrent format: ${fname} → ${needsTc ? 'transcode (aac audio)' : 'direct stream'}`);
+
+    const finalStreamUrl = needsTc
+      ? `/api/stream?url=${encodeURIComponent(streamUrl)}&transcode=true&vcodec=${encodeURIComponent(resolvedVcodec)}&acodec=${encodeURIComponent(resolvedAcodec)}`
+      : streamUrl;
+
+    const videoObj = {
+      id: info.infoHash,
+      title: file.name,
+      originalUrl: currentVideo?.originalUrl || `magnet:?xt=urn:btih:${info.infoHash}`,
+      streamUrl: finalStreamUrl,
+      rawStreamUrl: streamUrl,
+      service: 'torrent',
+      timestamp: Date.now()
+    };
+    setCurrentVideo(videoObj);
+    setPlayerLoading(false);
+    setPlayerLoaderMessage('');
   };
 
   const handleFormSubmit = (e) => {
@@ -728,6 +771,13 @@ export default function App() {
             playerLoaderMessage={playerLoaderMessage}
             onRecoverTorrent={loadTorrent}
             googleAuth={googleAuth}
+          />
+
+          {/* Torrent Files Explorer Drawer */}
+          <TorrentFilesExplorer 
+            torrentInfo={activeTorrentInfo}
+            onPlayFile={selectTorrentFile}
+            currentVideo={currentVideo}
           />
 
           {/* Torrent downloading status details card */}

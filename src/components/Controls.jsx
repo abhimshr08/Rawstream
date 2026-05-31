@@ -21,7 +21,6 @@ export default function Controls({
   setVideoAspect,
   videoMirror,
   setVideoMirror,
-  driveSeekBase,
   transcodeStartTime,
   seekGDriveStream,
   seekTranscodedStream,
@@ -74,14 +73,7 @@ export default function Controls({
 
     // Get the best available duration: prefer mediaDuration (pre-probed),
     // fall back to the live video element duration (populated once metadata loads)
-    let duration = 0;
-    if (currentVideo?.service === 'google') {
-      duration = mediaDuration || video?.duration || 0;
-    } else if (needsTranscode) {
-      duration = mediaDuration || video?.duration || 0;
-    } else {
-      duration = video?.duration || mediaDuration || 0;
-    }
+    const duration = mediaDuration || video?.duration || 0;
     
     if (isNaN(duration) || duration <= 0 || !isFinite(duration)) return;
     const seekTime = (pct / 100) * duration;
@@ -117,19 +109,12 @@ export default function Controls({
       if (isDraggingProgressRef.current) return;
 
       let displayTime = video.currentTime;
-      if (currentVideo?.service === 'google') {
-        displayTime = driveSeekBase + video.currentTime;
-      } else if (needsTranscode) {
+      if (needsTranscode) {
         displayTime = transcodeStartTime + video.currentTime;
       }
 
       // Best available duration: pre-probed mediaDuration first, then live video.duration
-      let duration = 0;
-      if (currentVideo?.service === 'google' || needsTranscode) {
-        duration = mediaDuration || video.duration || 0;
-      } else {
-        duration = video.duration || mediaDuration || 0;
-      }
+      const duration = mediaDuration || video.duration || 0;
 
       setCurrentTime(displayTime);
       if (duration > 0 && isFinite(duration)) {
@@ -141,7 +126,7 @@ export default function Controls({
 
     video.addEventListener('timeupdate', handleTimeUpdate);
     return () => video.removeEventListener('timeupdate', handleTimeUpdate);
-  }, [currentVideo, mediaDuration, needsTranscode, driveSeekBase, transcodeStartTime]);
+  }, [currentVideo, mediaDuration, needsTranscode, transcodeStartTime]);
 
   // Volume Handlers
   const handleVolumeChange = (e) => {
@@ -200,12 +185,9 @@ export default function Controls({
     setSelectedQuality(quality);
     setShowQualityMenu(false);
 
-    let currentPos = videoRef.current?.currentTime || 0;
-    if (currentVideo?.service === 'google') {
-      currentPos = driveSeekBase + (videoRef.current?.currentTime || 0);
-    } else if (needsTranscode) {
-      currentPos = transcodeStartTime + (videoRef.current?.currentTime || 0);
-    }
+    const currentPos = needsTranscode
+      ? transcodeStartTime + (videoRef.current?.currentTime || 0)
+      : videoRef.current?.currentTime || 0;
 
     addToast(`Changing resolution to: ${quality}`, 'info');
 

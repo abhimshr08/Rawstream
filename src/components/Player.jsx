@@ -78,7 +78,6 @@ export default function Player({
   const resumeTimeoutRef = useRef(null);
 
   // Manual Seek Offsets
-  const [driveSeekBase, setDriveSeekBase] = useState(0);
   const [transcodeStartTime, setTranscodeStartTime] = useState(0);
 
   // Drag Scrubber states shared
@@ -100,6 +99,7 @@ export default function Player({
   const recoveryAttemptsRef = useRef(0);
   const recoveryTimeRef = useRef(0);
   const initialRetryCountRef = useRef(0); // limit initial-load retries
+  const MAX_TORRENT_RECOVERY_ATTEMPTS = 2;
 
   // Format Helper
   const formatTime = (seconds) => {
@@ -130,8 +130,7 @@ export default function Player({
     if (!video || showPlaceholder) return;
 
     if (currentVideo?.service === 'google' && mediaDuration > 0) {
-      const currentPos = driveSeekBase + video.currentTime;
-      const seekTime = Math.max(0, Math.min(mediaDuration, currentPos + seconds));
+      const seekTime = Math.max(0, Math.min(mediaDuration, video.currentTime + seconds));
       debounceSeekGDrive(seekTime);
     } else {
       const duration = needsTranscode ? mediaDuration : video.duration;
@@ -154,12 +153,15 @@ export default function Player({
     logDebug(`[GDrive] Seeking to: ${formatTime(seconds)}`);
     setIsBuffering(true);
     setLoaderMessage('Seeking Google Drive stream...');
-    setDriveSeekBase(seconds);
 
-    const seekUrl = `/api/gdrive-stream?fileId=${encodeURIComponent(currentVideo.id)}&start=${Math.floor(seconds)}`;
     const video = videoRef.current;
-    video.src = seekUrl;
-    video.load();
+    if (!video) return;
+    if (!video.currentSrc) {
+      video.src = currentVideo.streamUrl;
+      video.load();
+    }
+
+    video.currentTime = seconds;
     video.play()
       .then(() => logDebug('[GDrive] Resumed after seek.'))
       .catch((err) => logDebug(`[GDrive] Seek play blocked: ${err.message}`));
@@ -207,6 +209,22 @@ export default function Player({
     }, 400);
   };
 
+  const resetTorrentCache = async () => {
+    if (!currentVideo || currentVideo.service !== 'torrent' || !currentVideo.id) return false;
+    try {
+      const resetRes = await authenticatedFetch(`/api/torrent/reset?infoHash=${encodeURIComponent(currentVideo.id)}`);
+      if (!resetRes.ok) {
+        const body = await resetRes.text();
+        throw new Error(body || resetRes.statusText);
+      }
+      logDebug('[Recovery] Server-side torrent cache reset successfully.');
+      return true;
+    } catch (err) {
+      logDebug(`[Recovery] Failed to reset torrent cache: ${err.message}`);
+      return false;
+    }
+  };
+
   // Resume playback check
   const checkForResumeProgress = (id) => {
     const item = historyList.find(x => x.id === id);
@@ -248,13 +266,12 @@ export default function Player({
     if (!video || !currentVideo || !session.token) return;
 
     let displayTime = video.currentTime;
-    if (currentVideo.service === 'google') {
-      displayTime = driveSeekBase + video.currentTime;
-    } else if (needsTranscode) {
+    if (needsTranscode) {
       displayTime = transcodeStartTime + video.currentTime;
     }
 
     const duration = mediaDuration || video.duration;
+
     if (isNaN(displayTime) || isNaN(duration) || duration <= 0) return;
 
     try {
@@ -414,13 +431,20 @@ export default function Player({
       }
 
       // If it fails mid-playback, recover the torrent client cache on the server
-      if (recoveryAttemptsRef.current < 1 && onRecoverTorrent) {
+      if (recoveryAttemptsRef.current < MAX_TORRENT_RECOVERY_ATTEMPTS && onRecoverTorrent) {
         recoveryAttemptsRef.current += 1;
         recoveryTimeRef.current = !isNaN(displayTime) && displayTime > 0 ? displayTime : 0;
 
-        logDebug(`[Recovery] Torrent playback failed mid-stream. Auto-recovering torrent cache on server at timestamp ${formatTime(recoveryTimeRef.current)}...`);
-        addToast('Reconnecting to torrent cache...', 'info');
-        onRecoverTorrent(currentVideo.originalUrl);
+        const recoveryDelay = Math.min(2000 + recoveryAttemptsRef.current * 1500, 6000);
+        logDebug(`[Recovery] Torrent playback failed mid-stream. Attempt ${recoveryAttemptsRef.current}/${MAX_TORRENT_RECOVERY_ATTEMPTS}, retrying in ${recoveryDelay/1000}s at ${formatTime(recoveryTimeRef.current)}...`);
+        setIsBuffering(true);
+        setLoaderMessage(`Reconnecting to torrent stream... (attempt ${recoveryAttemptsRef.current}/${MAX_TORRENT_RECOVERY_ATTEMPTS})`);
+
+        if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
+        seekTimeoutRef.current = setTimeout(async () => {
+          await resetTorrentCache();
+          onRecoverTorrent(currentVideo.originalUrl);
+        }, recoveryDelay);
         return;
       }
     }
@@ -564,7 +588,6 @@ export default function Player({
 
     setShowPlaceholder(false);
     setVideoError(null);
-    setDriveSeekBase(0);
     setTranscodeStartTime(0);
 
     // Check if we are recovering from a previous state
@@ -573,6 +596,7 @@ export default function Player({
     recoveryTimeRef.current = 0; // reset
 
     if (autoSeekTime > 0) {
+      recoveryAttemptsRef.current = 0;
       logDebug(`[Recovery] Auto-seeking recovered stream directly to: ${formatTime(autoSeekTime)}`);
       if (currentVideo.service === 'google') {
         seekGDriveStream(autoSeekTime);
@@ -937,7 +961,6 @@ export default function Player({
           setVideoAspect={setVideoAspect}
           videoMirror={videoMirror}
           setVideoMirror={setVideoMirror}
-          driveSeekBase={driveSeekBase}
           transcodeStartTime={transcodeStartTime}
           seekGDriveStream={debounceSeekGDrive}
           seekTranscodedStream={debounceSeekTranscoded}
