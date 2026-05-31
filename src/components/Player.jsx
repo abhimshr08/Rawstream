@@ -92,6 +92,9 @@ export default function Player({
       magnet: magnetUri,
       width: '100%',
       height: '100%',
+      features: {
+        chromecast: false
+      },
       on: function(e) {
         if (e.name === 'ready') {
           logDebug('[Webtor] Torrent stream player ready in viewport.');
