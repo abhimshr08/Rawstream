@@ -36,6 +36,7 @@ export default function Player({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isTheater, setIsTheater] = useState(false);
   const [useEmbed, setUseEmbed] = useState(false);
+  const [webtorLoaded, setWebtorLoaded] = useState(false);
 
   // Synchronize native fullscreen changes
   useEffect(() => {
@@ -47,6 +48,57 @@ export default function Player({
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
     };
   }, []);
+
+  // Dynamically load the Webtor Embed SDK script (CDN)
+  useEffect(() => {
+    if (window.webtor) {
+      setWebtorLoaded(true);
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/@webtor/embed-sdk-js/dist/index.min.js';
+    script.async = true;
+    script.charset = 'utf-8';
+    script.onload = () => {
+      logDebug('[Webtor] Embed SDK script loaded successfully.');
+      setWebtorLoaded(true);
+    };
+    script.onerror = () => {
+      logDebug('[Webtor] Failed to load Webtor Embed SDK script.');
+    };
+    document.head.appendChild(script);
+  }, []);
+
+  // Initialize Webtor player when currentVideo is torrent and SDK is loaded
+  useEffect(() => {
+    if (currentVideo?.service !== 'torrent' || !webtorLoaded) return;
+
+    // Webtor player requires a clean container element to boot
+    const container = document.getElementById('webtor-player-container');
+    if (container) {
+      container.innerHTML = ''; // wipe previous iframes/instances
+    }
+
+    logDebug(`[Webtor] Initializing torrent stream for infoHash: ${currentVideo.id}`);
+
+    // Standardize magnet URI format
+    const magnetUri = currentVideo.originalUrl.startsWith('magnet:')
+      ? currentVideo.originalUrl
+      : `magnet:?xt=urn:btih:${currentVideo.id}`;
+
+    window.webtor = window.webtor || [];
+    window.webtor.push({
+      id: 'webtor-player-container',
+      magnet: magnetUri,
+      width: '100%',
+      height: '100%',
+      on: function(e) {
+        if (e.name === 'ready') {
+          logDebug('[Webtor] Torrent stream player ready in viewport.');
+        }
+      }
+    });
+  }, [currentVideo, webtorLoaded]);
 
   const toggleFullscreen = () => {
     const container = playerRef.current;
@@ -570,8 +622,7 @@ export default function Player({
   // Watch currentVideo changes to load source
   useEffect(() => {
     setUseEmbed(false);
-    const video = videoRef.current;
-    if (!video || !currentVideo) return;
+    if (!currentVideo) return;
 
     if (currentVideo.error) {
       setShowPlaceholder(false);
@@ -589,6 +640,15 @@ export default function Player({
     setShowPlaceholder(false);
     setVideoError(null);
     setTranscodeStartTime(0);
+
+    // If it's a torrent, we initialize Webtor instead of standard HTML5 video tag
+    if (currentVideo.service === 'torrent') {
+      setIsBuffering(false);
+      return;
+    }
+
+    const video = videoRef.current;
+    if (!video) return;
 
     // Check if we are recovering from a previous state
     initialRetryCountRef.current = 0; // Reset retry counter for new video
@@ -877,8 +937,22 @@ export default function Player({
         </div>
       )}
 
-      {/* Video element or Google Drive preview iframe fallback */}
-      {useEmbed ? (
+      {/* Video element or Google Drive preview iframe fallback or Webtor torrent player */}
+      {currentVideo?.service === 'torrent' ? (
+        <div 
+          id="webtor-player-container" 
+          className="webtor-player-container"
+          style={{ 
+            width: '100%', 
+            height: '100%', 
+            borderRadius: '12px', 
+            overflow: 'hidden', 
+            background: 'black',
+            position: 'relative',
+            zIndex: 10
+          }}
+        />
+      ) : useEmbed ? (
         <iframe
           src={`https://drive.google.com/file/d/${currentVideo.id}/preview`}
           width="100%"
@@ -932,7 +1006,7 @@ export default function Player({
 
 
       {/* Play Overlay Screen Button */}
-      {!isPlaying && !showPlaceholder && !videoError && !isBuffering && !useEmbed && (
+      {!isPlaying && !showPlaceholder && !videoError && !isBuffering && !useEmbed && currentVideo?.service !== 'torrent' && (
         <div id="play-overlay" className="play-overlay" onClick={togglePlay}>
           <button className="large-play-btn" aria-label="Play">
             <svg viewBox="0 0 24 24" fill="currentColor">
@@ -943,7 +1017,7 @@ export default function Player({
       )}
 
       {/* Controls Overlay */}
-      {!showPlaceholder && !useEmbed && (
+      {!showPlaceholder && !useEmbed && currentVideo?.service !== 'torrent' && (
         <Controls 
           show={showControls || !isPlaying}
           videoRef={videoRef}
