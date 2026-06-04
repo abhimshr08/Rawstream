@@ -736,6 +736,25 @@ export default function App() {
               addToast('No files found in torrent.', 'error');
               setPlayerLoading(false);
             }
+          } else {
+            // Backend unavailable (e.g. GitHub Pages static host) — fall back to browser P2P mode.
+            // Player.jsx will detect isStaticHost and start in P2P mode automatically.
+            logDebug('[Torrent] Backend unavailable or no info returned. Falling back to browser P2P mode.');
+            const videoObj = {
+              id: initialInfo.infoHash,
+              title: initialInfo.name || 'Torrent Stream',
+              originalUrl: magnetUri,
+              streamUrl: magnetUri,      // P2P mode reads originalUrl/streamUrl as the magnet
+              rawStreamUrl: magnetUri,
+              service: 'torrent',
+              torrentFileIndex: 0,
+              timestamp: Date.now()
+            };
+            setCurrentVideo(videoObj);
+            setPlayerLoading(false);
+            setPlayerLoaderMessage('');
+            addToHistory(videoObj);
+            addToast('Streaming via browser P2P (no server available)', 'info');
           }
         }).catch((err) => {
           logDebug(`[Torrent] Background metadata fetch failed: ${err.message}`);

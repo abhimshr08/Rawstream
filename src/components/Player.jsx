@@ -39,7 +39,14 @@ export default function Player({
   const [isTheater, setIsTheater] = useState(false);
   const [useEmbed, setUseEmbed] = useState(false);
   const [webtorrentLoaded, setWebtorrentLoaded] = useState(false);
-  const [torrentPlayerMode, setTorrentPlayerMode] = useState('server'); // 'server' or 'p2p'
+  // Default to P2P mode on static hosts (GitHub Pages, Netlify, Vercel) where there is no backend
+  const isStaticHost = typeof window !== 'undefined' && (
+    window.location.hostname.endsWith('.github.io') ||
+    window.location.hostname.endsWith('.netlify.app') ||
+    window.location.hostname.endsWith('.vercel.app') ||
+    window.location.hostname.endsWith('.pages.dev')
+  );
+  const [torrentPlayerMode, setTorrentPlayerMode] = useState(isStaticHost ? 'p2p' : 'server'); // 'server' or 'p2p'
 
   const webtorrentClientRef = useRef(null);
   const webtorrentStatsIntervalRef = useRef(null);
