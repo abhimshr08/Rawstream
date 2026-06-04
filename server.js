@@ -144,6 +144,41 @@ function cleanOldTorrents() {
   }
 }
 
+// Fetch .torrent file from public caches to bypass P2P metadata resolution delays
+async function fetchTorrentFromCaches(infoHash) {
+  const cleanHash = infoHash.trim().toUpperCase();
+  const caches = [
+    `https://itorrents.org/torrent/${cleanHash}.torrent`,
+    `https://btcache.me/torrent/${cleanHash}`,
+    `http://torrage.info/torrent.php?h=${cleanHash}`
+  ];
+
+  for (const url of caches) {
+    try {
+      console.log(`[TorrentManager] Trying to fetch torrent from cache: ${url}`);
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), 7000); // 7s timeout per cache
+      const res = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+      });
+      clearTimeout(id);
+      if (res.ok) {
+        const buffer = await res.arrayBuffer();
+        if (buffer && buffer.byteLength > 0) {
+          console.log(`[TorrentManager] Successfully retrieved torrent buffer from cache (${buffer.byteLength} bytes)`);
+          return Buffer.from(buffer);
+        }
+      }
+    } catch (e) {
+      console.warn(`[TorrentManager] Cache fetch failed for ${url}:`, e.message);
+    }
+  }
+  return null;
+}
+
 async function addTorrent(torrentSource) {
   const client = await getTorrentClient();
   
@@ -271,11 +306,24 @@ Genießen Sie den Film!`;
     torrentSource = ensureMagnetTrackers(torrentSource);
   }
 
+  // Attempt to fetch raw torrent buffer from cache to bypass slow P2P metadata resolution
+  let finalSource = torrentSource;
+  if (infoHash && typeof torrentSource === 'string') {
+    try {
+      const cacheBuffer = await fetchTorrentFromCaches(infoHash);
+      if (cacheBuffer) {
+        finalSource = cacheBuffer;
+      }
+    } catch (e) {
+      console.error('[TorrentManager] Cache fetch failed:', e.message);
+    }
+  }
+
   return new Promise((resolve, reject) => {
     console.log(`[TorrentManager] Adding new torrent...`);
     let torrent;
     try {
-      torrent = client.add(torrentSource, {
+      torrent = client.add(finalSource, {
         path: path.join(os.tmpdir(), 'webtorrent'),
         deselect: true,
         announce: DEFAULT_TRACKERS
@@ -309,12 +357,12 @@ Genießen Sie den Film!`;
 
     setTimeout(() => {
       if (!torrent.ready) {
-        console.log('[TorrentManager] Metadata timeout after 90s.');
+        console.log('[TorrentManager] Metadata timeout after 300s.');
         if (torrent.infoHash) activeTorrents.delete(torrent.infoHash.toLowerCase());
         torrent.destroy({ destroyStore: true });
         reject(new Error('Metadata resolution timeout (no peers or slow connection)'));
       }
-    }, 90000); // 90 seconds — enough time for peers to respond on slow/sparse torrents
+    }, 300000); // 300 seconds (5 minutes) — generous time for cloud containers behind strict firewalls to bootstrap peers
   });
 }
 
