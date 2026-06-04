@@ -33,20 +33,26 @@ function saveHistories(histories) {
   localStorage.setItem('rawstream_mock_history', JSON.stringify(histories));
 }
 
-// Seed admin user on load if not present
+// Seed admin user on load using build-time env vars (VITE_ADMIN_USERNAME / VITE_ADMIN_PASSWORD_HASH)
+// These are set as GitHub Actions secrets and baked into the bundle at build time.
+// Falls back to admin/admin for local development.
 async function seedAdmin() {
+  const adminUsername = (import.meta.env.VITE_ADMIN_USERNAME || 'admin').trim();
+  const adminPasswordHash = (import.meta.env.VITE_ADMIN_PASSWORD_HASH || '').trim();
+
+  // Compute hash: use baked-in hash if provided, otherwise hash the default 'admin' password
+  const passwordHash = adminPasswordHash || await sha256('admin');
+
   const users = getUsers();
-  const adminUsername = 'admin';
-  if (!users[adminUsername]) {
-    const passwordHash = await sha256('admin');
-    users[adminUsername] = {
-      username: adminUsername,
-      passwordHash: passwordHash,
-      isAdmin: true,
-      createdAt: Date.now()
-    };
-    saveUsers(users);
-  }
+
+  // Always overwrite the admin user with the latest credentials from env
+  users[adminUsername] = {
+    username: adminUsername,
+    passwordHash,
+    isAdmin: true,
+    createdAt: users[adminUsername]?.createdAt || Date.now()
+  };
+  saveUsers(users);
 }
 seedAdmin();
 

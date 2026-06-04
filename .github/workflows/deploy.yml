@@ -34,8 +34,12 @@ jobs:
       - name: Build
         run: npm run build
         env:
-          # Set the base for GitHub Pages (/<repo-name>/)
+          # Base path for GitHub Pages (/<repo-name>/)
           VITE_BASE_URL: /Rawstream/
+          # Admin credentials — set these in:
+          # GitHub repo → Settings → Secrets and variables → Actions → New repository secret
+          VITE_ADMIN_USERNAME: ${{ secrets.VITE_ADMIN_USERNAME }}
+          VITE_ADMIN_PASSWORD_HASH: ${{ secrets.VITE_ADMIN_PASSWORD_HASH }}
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
