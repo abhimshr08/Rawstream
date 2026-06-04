@@ -40,19 +40,30 @@ async function seedAdmin() {
   const adminUsername = (import.meta.env.VITE_ADMIN_USERNAME || 'admin').trim();
   const adminPasswordHash = (import.meta.env.VITE_ADMIN_PASSWORD_HASH || '').trim();
 
-  // Compute hash: use baked-in hash if provided, otherwise hash the default 'admin' password
-  const passwordHash = adminPasswordHash || await sha256('admin');
+  // Compute expected hash: use baked-in hash if provided, otherwise hash the default 'admin' password
+  const expectedHash = adminPasswordHash || await sha256('admin');
 
   const users = getUsers();
+  const existing = users[adminUsername];
 
-  // Always overwrite the admin user with the latest credentials from env
-  users[adminUsername] = {
-    username: adminUsername,
-    passwordHash,
-    isAdmin: true,
-    createdAt: users[adminUsername]?.createdAt || Date.now()
-  };
-  saveUsers(users);
+  // Only write if the user doesn't exist yet, or the baked-in hash has changed
+  if (!existing || existing.passwordHash !== expectedHash) {
+    // Remove old admin entry if username changed (e.g. was 'admin', now 'Maverick9876')
+    // We detect this by finding any user with isAdmin=true that isn't the current admin username
+    Object.keys(users).forEach(uname => {
+      if (users[uname].isAdmin && uname !== adminUsername) {
+        delete users[uname];
+      }
+    });
+
+    users[adminUsername] = {
+      username: adminUsername,
+      passwordHash: expectedHash,
+      isAdmin: true,
+      createdAt: existing?.createdAt || Date.now()
+    };
+    saveUsers(users);
+  }
 }
 seedAdmin();
 
