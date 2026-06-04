@@ -100,12 +100,6 @@ async function getTorrentClient() {
 }
 
 const DEFAULT_TRACKERS = [
-  'https://tracker.nanoha.org:443/announce',
-  'https://tracker.lilithraws.cf:443/announce',
-  'https://tracker.manager.v6.navy:443/announce',
-  'https://tracker.qingwapt.org:443/announce',
-  'https://tracker.7471.top:443/announce',
-  'https://tracker.pmman.tech:443/announce',
   'udp://tracker.openbittorrent.com:80/announce',
   'udp://tracker.opentrackr.org:1337/announce',
   'udp://tracker.torrent.eu.org:451/announce',
