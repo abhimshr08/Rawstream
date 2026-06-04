@@ -3,12 +3,15 @@ dist/
 .env
 .env.*
 *.log
-dom.html
-test_player.js
+
+# Test artifacts
+e2e_error.html
+e2e_error.png
+headless_*.html
+headless_*.png
+test_faststart.mp4
+test_subs.srt
+
+# Data directory (user data, sessions, transcode cache)
 data/
-*.js
-!vite.config.js
-!server.js
-!app.js
-!src/**/*.js
-!src/**/*.jsx
+scratch/transcode_cache/

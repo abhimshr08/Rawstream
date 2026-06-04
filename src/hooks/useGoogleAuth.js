@@ -19,16 +19,29 @@ export function useGoogleAuth() {
   const [error, setError] = useState(null);
   const tokenClientRef = useRef(null);
 
-  // Fetch client ID from server at runtime (bypasses Vite build-time limitation)
+  // Load client ID from localStorage, environment, or backend config endpoint at runtime
   useEffect(() => {
+    const localId = localStorage.getItem('rawstream_google_client_id');
+    if (localId) {
+      setClientId(localId);
+      return;
+    }
+
+    const envId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+    if (envId) {
+      setClientId(envId);
+      return;
+    }
+
+    // Fallback: Fetch from backend /api/config
     fetch('/api/config')
-      .then(r => r.json())
+      .then(res => res.json())
       .then(data => {
         if (data.googleClientId) {
           setClientId(data.googleClientId);
         }
       })
-      .catch(() => {}); // silent — just means button won't appear
+      .catch(err => console.error('Failed to fetch runtime client ID:', err));
   }, []);
 
   // Returns true if we have a valid non-expired token
@@ -107,6 +120,16 @@ export function useGoogleAuth() {
     loading,
     error,
     isValid,
+    clientId,
+    setClientId: (id) => {
+      setClientId(id);
+      if (id) {
+        localStorage.setItem('rawstream_google_client_id', id);
+      } else {
+        localStorage.removeItem('rawstream_google_client_id');
+      }
+      tokenClientRef.current = null; // force recreation of token client
+    },
     isConfigured: !!clientId,  // lets UI know if button should appear
     requestToken,
     clearToken

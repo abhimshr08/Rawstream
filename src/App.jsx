@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   Folder, User, LogOut, HelpCircle, HardDrive, 
   Trash2, X, Plus, Clipboard, FileText, AlertCircle, 
-  CheckCircle2, Info, Play
+  CheckCircle2, Info, Play, Settings
 } from 'lucide-react';
 
 import Player from './components/Player';
@@ -13,6 +13,15 @@ import DebugPanel from './components/DebugPanel';
 import TorrentStats from './components/TorrentStats';
 import TorrentFilesExplorer from './components/TorrentFilesExplorer';
 import { useGoogleAuth } from './hooks/useGoogleAuth';
+import { 
+  mockGetHistory, 
+  mockAddHistory, 
+  mockDeleteHistoryItem, 
+  mockClearHistory, 
+  mockEditHistoryTitle,
+  mockUpdateHistoryProgress
+} from './utils/mockBackend';
+import { getTorrentInfoFromBuffer, parseMagnetUri } from './utils/torrentParser';
 
 
 export default function App() {
@@ -27,6 +36,22 @@ export default function App() {
   // Google OAuth (for quota-exceeded Drive files)
   const googleAuth = useGoogleAuth();
 
+  const [showSettings, setShowSettings] = useState(false);
+  const settingsDialogRef = useRef(null);
+
+  useEffect(() => {
+    const dialog = settingsDialogRef.current;
+    if (!dialog) return;
+    if (showSettings) {
+      if (!dialog.open) dialog.showModal();
+    } else {
+      if (dialog.open) dialog.close();
+    }
+  }, [showSettings]);
+
+  // Toast Stack Notifications
+  const [toasts, setToasts] = useState([]);
+
   // Layout State
   const [showHistory, setShowHistory] = useState(true);
   const [showAdmin, setShowAdmin] = useState(false);
@@ -36,9 +61,6 @@ export default function App() {
   const [dragOver, setDragOver] = useState(false);
   const [playerLoading, setPlayerLoading] = useState(false);
   const [playerLoaderMessage, setPlayerLoaderMessage] = useState('');
-
-  // Toast Stack Notifications
-  const [toasts, setToasts] = useState([]);
   
   // Torrent and Media State
   const [historyList, setHistoryList] = useState([]);
@@ -97,6 +119,9 @@ export default function App() {
   };
 
   const handleClearSession = () => {
+    if (session.token) {
+      authenticatedFetch('/api/auth/logout', { method: 'POST' }).catch(err => console.error('Logout error:', err));
+    }
     setSession({ username: null, token: null, isAdmin: false });
     localStorage.removeItem('rawstream_session_username');
     localStorage.removeItem('rawstream_session_token');
@@ -111,15 +136,17 @@ export default function App() {
   };
 
   const authenticatedFetch = async (url, options = {}) => {
-    options.headers = options.headers || {};
-    if (session.token) {
-      options.headers['Authorization'] = `Bearer ${session.token}`;
+    const headers = {
+      ...options.headers,
+      'Authorization': `Bearer ${session.token}`
+    };
+    try {
+      const res = await fetch(url, { ...options, headers });
+      return res;
+    } catch (err) {
+      console.error(`authenticatedFetch error for ${url}:`, err);
+      throw err;
     }
-    const res = await fetch(url, options);
-    if (res.status === 401) {
-      handleClearSession();
-    }
-    return res;
   };
 
   const syncHistoryFromBackend = async () => {
@@ -129,17 +156,22 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         setHistoryList(data);
+      } else {
+        const data = mockGetHistory(session.username);
+        setHistoryList(data);
       }
     } catch (e) {
-      console.error('Failed to sync history from backend:', e);
+      console.error('Failed to sync history:', e);
+      const data = mockGetHistory(session.username);
+      setHistoryList(data);
     }
   };
 
   useEffect(() => {
-    if (session.token) {
+    if (session.username) {
       syncHistoryFromBackend();
     }
-  }, [session.token]);
+  }, [session.username, session.token]);
 
   // History Actions
   const addToHistory = async (videoObj) => {
@@ -148,14 +180,19 @@ export default function App() {
       const res = await authenticatedFetch('/api/history', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ videoObj })
+        body: JSON.stringify(videoObj)
       });
       if (res.ok) {
         const data = await res.json();
         setHistoryList(data);
+      } else {
+        const data = mockAddHistory(session.username, videoObj);
+        setHistoryList(data);
       }
     } catch (e) {
       console.error('Failed to add to history:', e);
+      const data = mockAddHistory(session.username, videoObj);
+      setHistoryList(data);
     }
   };
 
@@ -163,16 +200,23 @@ export default function App() {
     if (e) e.stopPropagation();
     if (!session.token) return;
     try {
-      const res = await authenticatedFetch(`/api/history/${id}`, {
+      const res = await authenticatedFetch(`/api/history/${encodeURIComponent(id)}`, {
         method: 'DELETE'
       });
       if (res.ok) {
         const data = await res.json();
         setHistoryList(data);
         addToast('Stream removed from history', 'info');
+      } else {
+        const data = mockDeleteHistoryItem(session.username, id);
+        setHistoryList(data);
+        addToast('Stream removed from history', 'info');
       }
     } catch (e) {
       console.error('Failed to delete history item:', e);
+      const data = mockDeleteHistoryItem(session.username, id);
+      setHistoryList(data);
+      addToast('Stream removed from history', 'info');
     }
   };
 
@@ -184,11 +228,19 @@ export default function App() {
           method: 'DELETE'
         });
         if (res.ok) {
-          setHistoryList([]);
+          const data = await res.json();
+          setHistoryList(data);
+          addToast('History cleared', 'info');
+        } else {
+          const data = mockClearHistory(session.username);
+          setHistoryList(data);
           addToast('History cleared', 'info');
         }
       } catch (e) {
         console.error('Failed to clear history:', e);
+        const data = mockClearHistory(session.username);
+        setHistoryList(data);
+        addToast('History cleared', 'info');
       }
     }
   };
@@ -196,7 +248,7 @@ export default function App() {
   const editHistoryItemTitle = async (id, newTitle) => {
     if (!session.token) return;
     try {
-      const res = await authenticatedFetch(`/api/history/${id}`, {
+      const res = await authenticatedFetch(`/api/history/${encodeURIComponent(id)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: newTitle })
@@ -208,9 +260,44 @@ export default function App() {
           setCurrentVideo(prev => ({ ...prev, title: newTitle }));
         }
         addToast('Title updated', 'success');
+      } else {
+        const data = mockEditHistoryTitle(session.username, id, newTitle);
+        setHistoryList(data);
+        if (currentVideo && currentVideo.id === id) {
+          setCurrentVideo(prev => ({ ...prev, title: newTitle }));
+        }
+        addToast('Title updated', 'success');
       }
     } catch (e) {
       console.error('Failed to edit history item title:', e);
+      const data = mockEditHistoryTitle(session.username, id, newTitle);
+      setHistoryList(data);
+      if (currentVideo && currentVideo.id === id) {
+        setCurrentVideo(prev => ({ ...prev, title: newTitle }));
+      }
+      addToast('Title updated', 'success');
+    }
+  };
+
+  const updateHistoryProgress = async (id, currentTime, duration) => {
+    if (!session.token) return;
+    try {
+      const res = await authenticatedFetch(`/api/history/${encodeURIComponent(id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ currentTime, duration })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setHistoryList(data);
+      } else {
+        const data = mockUpdateHistoryProgress(session.username, id, currentTime, duration);
+        setHistoryList(data);
+      }
+    } catch (e) {
+      console.error('Failed to update progress in history:', e);
+      const data = mockUpdateHistoryProgress(session.username, id, currentTime, duration);
+      setHistoryList(data);
     }
   };
 
@@ -233,6 +320,9 @@ export default function App() {
       lowerUrl.includes('api.onedrive.com')
     ) {
       return 'onedrive';
+    }
+    if (lowerUrl.startsWith('http://') || lowerUrl.startsWith('https://')) {
+      return 'direct';
     }
     return 'unknown';
   };
@@ -278,25 +368,9 @@ export default function App() {
     }
   };
 
-  // Stats polling
+  // Stats polling (Simulated no-op for static deployment)
   const startTorrentStats = (infoHash) => {
     clearTorrentPolling();
-    torrentPollInterval.current = setInterval(async () => {
-      try {
-        const res = await authenticatedFetch(`/api/torrent/status?infoHash=${encodeURIComponent(infoHash)}`);
-        if (res.ok) {
-          const stats = await res.json();
-          setTorrentStats({
-            name: stats.name,
-            speed: stats.downloadSpeed,
-            peers: stats.numPeers,
-            progress: stats.progress
-          });
-        }
-      } catch (err) {
-        logDebug(`Stats poll error: ${err.message}`);
-      }
-    }, 1500);
   };
 
   // Loading Streams
@@ -327,69 +401,37 @@ export default function App() {
         return;
       }
       fileId = parsed.id;
-      setPlayerLoaderMessage('Resolving Google Drive stream...');
-      logDebug(`Resolving Google Drive stream: ${fileId}`);
-      try {
-        const resolveRes = await authenticatedFetch(`/api/resolve?fileId=${encodeURIComponent(fileId)}`);
-        const resolveData = await resolveRes.json();
-        if (!resolveRes.ok || resolveData.error) throw new Error(resolveData.error || 'Resolve failed');
-        
-        streamUrl = resolveData.streamUrl;
-        logDebug(`Drive stream resolved: ${streamUrl}`);
-        
-        // Duration probe
-        let resolvedDur = 0;
-        try {
-          const metaRes = await authenticatedFetch(`/api/gdrive-meta?fileId=${encodeURIComponent(fileId)}`);
-          if (metaRes.ok) {
-            const meta = await metaRes.json();
-            if (meta.duration) {
-              resolvedDur = meta.duration;
-              setMediaDuration(meta.duration);
-              logDebug(`Drive metadata duration: ${meta.duration}s`);
-            }
-          }
-        } catch (e) {
-          logDebug(`Drive metadata skipped: ${e.message}`);
-        }
+      setPlayerLoaderMessage('Loading Google Drive stream...');
+      logDebug(`Loading Google Drive stream: ${fileId}`);
+      
+      streamUrl = `https://docs.google.com/uc?export=download&id=${fileId}`;
 
-        setNeedsTranscode(false);
-        setVcodec('h264');
-        setAcodec('aac');
-        
-        const videoObj = {
-          id: fileId,
-          title: customTitle || `Stream - Google Drive (${new Date().toLocaleDateString()})`,
-          originalUrl: url,
-          streamUrl,
-          rawStreamUrl: streamUrl,
-          service,
-          timestamp: Date.now()
-        };
-        setCurrentVideo(videoObj);
-        setPlayerLoading(false);
-        setPlayerLoaderMessage('');
-        addToHistory(videoObj);
-      } catch (err) {
-        logDebug(`Google Drive stream resolution failed: ${err.message}`);
-        addToast('Google Drive stream failed to resolve.', 'error');
-        
-        const videoObj = {
-          id: fileId,
-          title: `Google Drive Stream`,
-          originalUrl: url,
-          service,
-          error: err.message || 'RESOLVE_FAILED',
-          timestamp: Date.now()
-        };
-        setCurrentVideo(videoObj);
-        setPlayerLoading(false);
-        setPlayerLoaderMessage('');
-      }
+      setNeedsTranscode(false);
+      setVcodec('h264');
+      setAcodec('aac');
+      setMediaDuration(0);
+      
+      const videoObj = {
+        id: fileId,
+        title: customTitle || `Stream - Google Drive (${new Date().toLocaleDateString()})`,
+        originalUrl: url,
+        streamUrl,
+        rawStreamUrl: streamUrl,
+        service,
+        timestamp: Date.now()
+      };
+      setCurrentVideo(videoObj);
+      setPlayerLoading(false);
+      setPlayerLoaderMessage('');
+      addToHistory(videoObj);
     } else {
-      if (service === 'local') {
-        fileId = 'local_' + url.replace(/[^a-zA-Z0-9]/g, '_');
-        streamUrl = url;
+      if (service === 'local' || service === 'direct') {
+        fileId = service === 'local' 
+          ? 'local_' + url.replace(/[^a-zA-Z0-9]/g, '_')
+          : 'direct_' + url.replace(/[^a-zA-Z0-9]/g, '_');
+        streamUrl = service === 'local'
+          ? `/api/stream?url=${encodeURIComponent(url)}`
+          : url;
       } else if (service === 'onedrive') {
         const parsed = parseOneDriveLink(url);
         if (!parsed) {
@@ -401,48 +443,54 @@ export default function App() {
         fileId = parsed.id;
         streamUrl = parsed.streamUrl;
       } else {
-        addToast('Error: Unsupported media link.', 'error');
+        addToast('Unsupported media format. Please paste a valid Google Drive link, OneDrive link, Torrent Magnet URI, or direct video URL.', 'error');
         setPlayerLoading(false);
         setPlayerLoaderMessage('');
         return;
       }
 
-      setPlayerLoaderMessage('Probing format details...');
-      logDebug(`Probing format: ${streamUrl}`);
-      let resolvedDur = 0;
-      let resolvedTranscode = false;
-      let resolvedVcodec = '';
-      let resolvedAcodec = '';
-      try {
-        const probeRes = await authenticatedFetch(`/api/probe?url=${encodeURIComponent(streamUrl)}`);
-        const probeData = await probeRes.json();
-        if (probeData.error) throw new Error(probeData.error);
-        
-        resolvedDur = probeData.duration || 0;
-        resolvedTranscode = probeData.needsTranscode;
-        resolvedVcodec = probeData.videoCodec || '';
-        resolvedAcodec = probeData.audioCodec || '';
+      setPlayerLoaderMessage('Probing media properties...');
+      logDebug(`Probing media stream: ${streamUrl}`);
+      
+      let duration = 0;
+      let transc = false;
+      let vc = '';
+      let ac = '';
 
-        setMediaDuration(resolvedDur);
-        setNeedsTranscode(resolvedTranscode);
-        setVcodec(resolvedVcodec);
-        setAcodec(resolvedAcodec);
-        logDebug(`Probe metadata: duration=${resolvedDur}s, transcode=${resolvedTranscode}, vcodec=${resolvedVcodec}, acodec=${resolvedAcodec}`);
+      try {
+        const probeRes = await fetch(`/api/probe?url=${encodeURIComponent(streamUrl)}`);
+        if (probeRes.ok) {
+          const meta = await probeRes.json();
+          logDebug(`[Probe] Result: duration=${meta.duration}s, needsTranscode=${meta.needsTranscode}, vcodec=${meta.videoCodec}, acodec=${meta.audioCodec}`);
+          duration = meta.duration || 0;
+          transc = meta.needsTranscode || false;
+          vc = meta.videoCodec || '';
+          ac = meta.audioCodec || '';
+        } else {
+          logDebug('[Probe] Failed to probe media. Using direct fallback.');
+        }
       } catch (err) {
-        logDebug(`Probe failed (${err.message}). Defaulting to direct stream.`);
-        setNeedsTranscode(false);
-        setMediaDuration(0);
+        logDebug(`[Probe] Error: ${err.message}. Using direct fallback.`);
       }
 
-      const finalStreamUrl = resolvedTranscode
-        ? `/api/stream?url=${encodeURIComponent(streamUrl)}&transcode=true&vcodec=${encodeURIComponent(resolvedVcodec)}&acodec=${encodeURIComponent(resolvedAcodec)}`
-        : `/api/stream?url=${encodeURIComponent(streamUrl)}`;
+      setNeedsTranscode(transc);
+      setMediaDuration(duration);
+      setVcodec(vc);
+      setAcodec(ac);
+
+      let filename = 'Direct HTTP Stream';
+      try {
+        const urlObj = new URL(url);
+        const pathParts = urlObj.pathname.split('/');
+        const lastPart = pathParts[pathParts.length - 1];
+        if (lastPart) filename = decodeURIComponent(lastPart);
+      } catch (e) {}
 
       const videoObj = {
         id: fileId,
-        title: customTitle || `${service === 'local' ? url.split('/').pop() : 'OneDrive Stream'} (${new Date().toLocaleDateString()})`,
+        title: customTitle || `${service === 'local' ? url.split('/').pop() : filename} (${new Date().toLocaleDateString()})`,
         originalUrl: url,
-        streamUrl: finalStreamUrl,
+        streamUrl: streamUrl,
         rawStreamUrl: streamUrl,
         service,
         timestamp: Date.now()
@@ -454,130 +502,300 @@ export default function App() {
     }
   };
 
-  const loadTorrent = async (torrentSource) => {
-    setPlayerLoading(true);
-    setPlayerLoaderMessage('Connecting to WebTorrent cache...');
-    logDebug('Connecting to WebTorrent cache...');
+  const DEFAULT_TRACKERS = [
+    'udp://tracker.openbittorrent.com:80/announce',
+    'udp://tracker.opentrackr.org:1337/announce',
+    'udp://tracker.internetwarriors.net:1337/announce',
+    'udp://tracker.leechers-paradise.org:6969/announce',
+    'udp://tracker.coppersurfer.tk:6969/announce',
+    'udp://tracker.exodus.desync.com:6969/announce',
+    'udp://tracker.torrent.eu.org:451/announce',
+    'udp://9.rarbg.to:2710/announce',
+    'wss://tracker.fastcast.nz',
+    'wss://tracker.openwebtorrent.com',
+    'wss://tracker.btorrent.xyz',
+    'wss://tracker.webtorrent.io'
+  ];
+
+  const augmentMagnetWithTrackers = (magnetUri) => {
+    if (!magnetUri || !magnetUri.startsWith('magnet:?')) return magnetUri;
+    if (magnetUri.includes('wss://')) return magnetUri;
+    const separator = magnetUri.includes('?') ? '&' : '?';
+    const trackerParams = DEFAULT_TRACKERS.map(t => `tr=${encodeURIComponent(t)}`).join('&');
+    return `${magnetUri}${separator}${trackerParams}`;
+  };
+
+  // Build torrent stream URL — direct by default, transcoded only when needed
+  const buildTorrentServerStreamUrl = (infoHash, fileIndex = 0, forceTranscode = false, quality = 'original') => {
+    const target = `/api/torrent/stream?infoHash=${encodeURIComponent(infoHash)}&fileIndex=${encodeURIComponent(fileIndex)}`;
+    if (forceTranscode || (quality && quality !== 'original')) {
+      const qualityParam = quality && quality !== 'original' ? `&quality=${encodeURIComponent(quality)}` : '';
+      return `/api/stream?url=${encodeURIComponent(target)}&transcode=true${qualityParam}`;
+    }
+    // Direct stream — no FFmpeg overhead for native h264/AAC MP4 files
+    return target;
+  };
+
+  const buildTorrentProbeUrl = (infoHash, fileIndex = 0) => {
+    return `/api/torrent/stream?infoHash=${encodeURIComponent(infoHash)}&fileIndex=${encodeURIComponent(fileIndex)}`;
+  };
+
+  const fetchTorrentInfo = async (magnetUri, timeoutMs = 40000) => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
     try {
-      let res;
-      if (torrentSource instanceof Uint8Array || ArrayBuffer.isView(torrentSource)) {
-        res = await authenticatedFetch('/api/torrent/info', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/octet-stream' },
-          body: torrentSource
-        });
-      } else {
-        res = await authenticatedFetch(`/api/torrent/info?torrentUrl=${encodeURIComponent(torrentSource)}`);
-      }
-
-      const info = await res.json();
-      if (!res.ok || info.error) throw new Error(info.error || 'Torrent failed');
-
-      setActiveTorrentInfo(info);
-      logDebug(`Torrent loaded: "${info.name}" (${info.files.length} files)`);
-      setPlayerLoaderMessage('Selecting playable video file...');
-
-      const videoFile = info.files.find(f => {
-        const name = f.name.toLowerCase();
-        return name.endsWith('.mp4') || name.endsWith('.webm') || name.endsWith('.mkv') ||
-               name.endsWith('.avi') || name.endsWith('.mov') || name.endsWith('.ogv') ||
-               name.endsWith('.m4v') || name.endsWith('.ts');
+      const response = await fetch(`/api/torrent/info?torrentUrl=${encodeURIComponent(magnetUri)}`, {
+        signal: controller.signal
       });
 
-      if (!videoFile) {
-        addToast('No playable video file found in torrent.', 'error');
-        setPlayerLoading(false);
-        setPlayerLoaderMessage('');
-        return;
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.error || `Torrent metadata request failed (${response.status})`);
       }
 
-      logDebug(`Selected file: "${videoFile.name}" (${(videoFile.length / 1024 / 1024).toFixed(1)} MB)`);
-      
-      const streamUrl = `/api/torrent/stream?infoHash=${encodeURIComponent(info.infoHash)}&fileIndex=${videoFile.index}`;
-      
-      // Smart extension-based transcoding decision (no probe - torrent has no data yet)
-      // MP4/WebM/M4V/MOV -> browser-native, stream direct
-      // MKV/AVI/TS/OGV -> need FFmpeg transcode for browser compatibility
-      const fname = videoFile.name.toLowerCase();
-      const nativeExts = ['.mp4', '.webm', '.m4v', '.mov'];
-      const transcodeExts = ['.mkv', '.avi', '.ts', '.ogv'];
-      const isNative = nativeExts.some(e => fname.endsWith(e));
-      const needsTc = !isNative; // transcode non-native formats
-      
-      // For MKV/AVI: transcode with copy-video + transcode-audio (most MKV have h264 video, ac3/dts audio)
-      // Use aac audio transcode always for browser compat, video copy where possible
-      const resolvedVcodec = 'h264';
-      const resolvedAcodec = needsTc ? 'ac3' : 'aac';
+      return await response.json();
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        logDebug('[Torrent] Metadata fetch aborted after timeout. Continuing with partial torrent info.');
+      } else {
+        logDebug(`[Torrent] Metadata fetch failed: ${err.message}`);
+      }
+      return null;
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
 
-      setMediaDuration(0); // Duration unknown until video plays
-      setNeedsTranscode(needsTc);
-      setVcodec(resolvedVcodec);
-      setAcodec(resolvedAcodec);
-      logDebug(`Torrent format: ${fname} → ${needsTc ? 'transcode (aac audio)' : 'direct stream'}`);
+  const findPreferredTorrentFile = (files) => {
+    if (!files || files.length === 0) return null;
+    return files.find(f => {
+      const name = f.name.toLowerCase();
+      return name.endsWith('.mp4') || name.endsWith('.webm') || name.endsWith('.mkv') ||
+             name.endsWith('.avi') || name.endsWith('.mov') || name.endsWith('.ogv') ||
+             name.endsWith('.m4v') || name.endsWith('.ts');
+    }) || files[0];
+  };
 
-      const finalStreamUrl = needsTc
-        ? `/api/stream?url=${encodeURIComponent(streamUrl)}&transcode=true&vcodec=${encodeURIComponent(resolvedVcodec)}&acodec=${encodeURIComponent(resolvedAcodec)}`
-        : streamUrl;
+  const loadTorrent = async (torrentSource) => {
+    setPlayerLoading(true);
+    setPlayerLoaderMessage('Processing torrent data...');
+    logDebug('Processing torrent data...');
 
-      const videoObj = {
-        id: info.infoHash,
-        title: videoFile.name,
-        originalUrl: typeof torrentSource === 'string' ? torrentSource : `magnet:?xt=urn:btih:${info.infoHash}`,
-        streamUrl: finalStreamUrl,
-        rawStreamUrl: streamUrl,
-        service: 'torrent',
-        timestamp: Date.now()
+    try {
+      let info;
+      let magnetUri = null;
+
+      if (torrentSource instanceof Uint8Array || ArrayBuffer.isView(torrentSource)) {
+        // Parse raw .torrent file buffer client-side
+        info = await getTorrentInfoFromBuffer(torrentSource.buffer || torrentSource);
+      } else if (typeof torrentSource === 'string' && torrentSource.startsWith('magnet:')) {
+        // Parse magnet URI client-side
+        info = parseMagnetUri(torrentSource);
+        magnetUri = augmentMagnetWithTrackers(torrentSource);
+      } else if (typeof torrentSource === 'string' && /^[a-fA-F0-9]{40}$/.test(torrentSource.trim())) {
+        // Raw infohash
+        info = {
+          name: 'Torrent Stream',
+          infoHash: torrentSource.trim().toLowerCase(),
+          files: []
+        };
+        magnetUri = augmentMagnetWithTrackers(`magnet:?xt=urn:btih:${info.infoHash}&dn=${encodeURIComponent(info.name)}`);
+      } else {
+        throw new Error('Unsupported torrent source format. Please use magnet links or upload .torrent files.');
+      }
+
+      if (!magnetUri) {
+        magnetUri = `magnet:?xt=urn:btih:${info.infoHash}&dn=${encodeURIComponent(info.name)}`;
+      }
+
+      const initialInfo = {
+        ...info,
+        files: info.files || []
       };
-      setCurrentVideo(videoObj);
-      setPlayerLoading(false);
-      setPlayerLoaderMessage('');
-      addToHistory(videoObj);
-      startTorrentStats(info.infoHash);
+      setActiveTorrentInfo(initialInfo);
+
+      const initialFile = findPreferredTorrentFile(initialInfo.files);
+      const initialFileIndex = initialFile ? initialFile.index : 0;
+      const streamUrl = buildTorrentServerStreamUrl(initialInfo.infoHash, initialFileIndex);
+      const title = initialFile ? initialFile.name : initialInfo.name;
+
+      if (initialInfo.files && initialInfo.files.length > 0) {
+        // We already have files (e.g. uploaded .torrent file)
+        const isNative = initialFile && (
+          initialFile.name.toLowerCase().endsWith('.mp4') ||
+          initialFile.name.toLowerCase().endsWith('.webm') ||
+          initialFile.name.toLowerCase().endsWith('.mov')
+        );
+        setNeedsTranscode(!isNative);
+        setMediaDuration(0);
+        setVcodec('h264');
+        setAcodec('aac');
+
+        const videoObj = {
+          id: initialInfo.infoHash,
+          title,
+          originalUrl: magnetUri,
+          streamUrl,
+          rawStreamUrl: `/api/torrent/stream?infoHash=${encodeURIComponent(initialInfo.infoHash)}&fileIndex=${encodeURIComponent(initialFileIndex)}`,
+          service: 'torrent',
+          torrentFileIndex: initialFileIndex,
+          timestamp: Date.now()
+        };
+
+        setCurrentVideo(videoObj);
+        setPlayerLoading(false);
+        setPlayerLoaderMessage('');
+        addToHistory(videoObj);
+        setTorrentStats(null);
+
+        // Run probe in the background
+        logDebug(`[Torrent Probe] Initiating background probe for index ${initialFileIndex}...`);
+        const probeUrl = buildTorrentProbeUrl(initialInfo.infoHash, initialFileIndex);
+        fetch(`/api/probe?url=${encodeURIComponent(probeUrl)}`)
+          .then(res => {
+            if (res.ok) return res.json();
+            throw new Error(`HTTP ${res.status}`);
+          })
+          .then(meta => {
+            logDebug(`[Torrent Probe] Result: duration=${meta.duration}s, needsTranscode=${meta.needsTranscode}, vcodec=${meta.videoCodec}, acodec=${meta.audioCodec}`);
+            setMediaDuration(meta.duration || 0);
+            setNeedsTranscode(meta.needsTranscode !== undefined ? meta.needsTranscode : true);
+            setVcodec(meta.videoCodec || 'h264');
+            setAcodec(meta.audioCodec || 'aac');
+          })
+          .catch(err => {
+            logDebug(`[Torrent Probe] Background probe failed: ${err.message}`);
+          });
+      } else {
+        // No files yet (e.g. magnet link), keep loading spinner active
+        setPlayerLoading(true);
+        setPlayerLoaderMessage('Resolving torrent files list...');
+        setTorrentStats(null);
+      }
+
+      if ((!initialInfo.files || initialInfo.files.length === 0) && magnetUri) {
+        fetchTorrentInfo(magnetUri, 40000).then(async (backendInfo) => {
+          if (backendInfo && backendInfo.infoHash === initialInfo.infoHash) {
+            const mergedInfo = {
+              ...initialInfo,
+              name: backendInfo.name || initialInfo.name,
+              files: backendInfo.files || initialInfo.files
+            };
+            setActiveTorrentInfo(mergedInfo);
+            if (mergedInfo.files && mergedInfo.files.length > 0) {
+              const preferredFile = findPreferredTorrentFile(mergedInfo.files);
+              const targetIndex = preferredFile ? preferredFile.index : 0;
+              const newStreamUrl = buildTorrentServerStreamUrl(mergedInfo.infoHash, targetIndex);
+              
+              const isPrefNative = preferredFile && (
+                preferredFile.name.toLowerCase().endsWith('.mp4') ||
+                preferredFile.name.toLowerCase().endsWith('.webm') ||
+                preferredFile.name.toLowerCase().endsWith('.mov')
+              );
+              setNeedsTranscode(!isPrefNative);
+              setMediaDuration(0);
+              setVcodec('h264');
+              setAcodec('aac');
+
+              const videoObj = {
+                id: mergedInfo.infoHash,
+                title: preferredFile ? preferredFile.name : mergedInfo.name,
+                originalUrl: magnetUri,
+                streamUrl: newStreamUrl,
+                rawStreamUrl: `/api/torrent/stream?infoHash=${encodeURIComponent(mergedInfo.infoHash)}&fileIndex=${encodeURIComponent(targetIndex)}`,
+                service: 'torrent',
+                torrentFileIndex: targetIndex,
+                timestamp: Date.now()
+              };
+
+              setCurrentVideo(videoObj);
+              setPlayerLoading(false);
+              setPlayerLoaderMessage('');
+              addToHistory(videoObj);
+
+              // Probe in background once metadata loads
+              logDebug(`[Torrent Background] Probing stream in background: ${newStreamUrl}`);
+              const probeUrl = buildTorrentProbeUrl(mergedInfo.infoHash, targetIndex);
+              fetch(`/api/probe?url=${encodeURIComponent(probeUrl)}`)
+                .then(res => {
+                  if (res.ok) return res.json();
+                  throw new Error(`HTTP ${res.status}`);
+                })
+                .then(meta => {
+                  logDebug(`[Torrent Background Probe] Result: duration=${meta.duration}s, needsTranscode=${meta.needsTranscode}`);
+                  setMediaDuration(meta.duration || 0);
+                  setNeedsTranscode(meta.needsTranscode !== undefined ? meta.needsTranscode : true);
+                  setVcodec(meta.videoCodec || 'h264');
+                  setAcodec(meta.audioCodec || 'aac');
+                })
+                .catch(e => {
+                  logDebug(`[Torrent Background Probe] Error: ${e.message}`);
+                });
+            } else {
+              addToast('No files found in torrent.', 'error');
+              setPlayerLoading(false);
+            }
+          }
+        }).catch((err) => {
+          logDebug(`[Torrent] Background metadata fetch failed: ${err.message}`);
+          addToast('Failed to resolve torrent metadata.', 'error');
+          setPlayerLoading(false);
+        });
+      }
     } catch (err) {
       logDebug(`Torrent load failed: ${err.message}`);
-      addToast('WebTorrent connection error.', 'error');
+      addToast(err.message || 'Torrent stream initialization failed.', 'error');
       setPlayerLoading(false);
       setPlayerLoaderMessage('');
     }
   };
 
   const selectTorrentFile = (info, file) => {
-    logDebug(`Switching to torrent file: "${file.name}" (${(file.length / 1024 / 1024).toFixed(1)} MB)`);
-    setPlayerLoading(true);
-    setPlayerLoaderMessage('Preparing selected torrent file...');
+    logDebug(`Switching to torrent file: "${file.name}"`);
+    const magnetUri = `magnet:?xt=urn:btih:${info.infoHash}&dn=${encodeURIComponent(info.name)}`;
+    const isFileNative = file.name.toLowerCase().endsWith('.mp4') ||
+                         file.name.toLowerCase().endsWith('.webm') ||
+                         file.name.toLowerCase().endsWith('.mov');
+    const streamUrl = buildTorrentServerStreamUrl(info.infoHash, file.index, !isFileNative);
 
-    const streamUrl = `/api/torrent/stream?infoHash=${encodeURIComponent(info.infoHash)}&fileIndex=${file.index}`;
-    
-    const fname = file.name.toLowerCase();
-    const nativeExts = ['.mp4', '.webm', '.m4v', '.mov'];
-    const isNative = nativeExts.some(e => fname.endsWith(e));
-    const needsTc = !isNative;
-    
-    const resolvedVcodec = 'h264';
-    const resolvedAcodec = needsTc ? 'ac3' : 'aac';
-
+    setNeedsTranscode(!isFileNative);
     setMediaDuration(0);
-    setNeedsTranscode(needsTc);
-    setVcodec(resolvedVcodec);
-    setAcodec(resolvedAcodec);
-    logDebug(`Torrent format: ${fname} → ${needsTc ? 'transcode (aac audio)' : 'direct stream'}`);
+    setVcodec('h264');
+    setAcodec('aac');
 
-    const finalStreamUrl = needsTc
-      ? `/api/stream?url=${encodeURIComponent(streamUrl)}&transcode=true&vcodec=${encodeURIComponent(resolvedVcodec)}&acodec=${encodeURIComponent(resolvedAcodec)}`
-      : streamUrl;
-
+    const directTorrentUrl = `/api/torrent/stream?infoHash=${encodeURIComponent(info.infoHash)}&fileIndex=${encodeURIComponent(file.index)}`;
     const videoObj = {
       id: info.infoHash,
       title: file.name,
-      originalUrl: currentVideo?.originalUrl || `magnet:?xt=urn:btih:${info.infoHash}`,
-      streamUrl: finalStreamUrl,
-      rawStreamUrl: streamUrl,
+      originalUrl: magnetUri,
+      streamUrl,
+      rawStreamUrl: directTorrentUrl,
       service: 'torrent',
+      torrentFileIndex: file.index,
       timestamp: Date.now()
     };
     setCurrentVideo(videoObj);
-    setPlayerLoading(false);
-    setPlayerLoaderMessage('');
+    addToHistory(videoObj);
+
+    // Perform probe asynchronously in the background
+    logDebug(`[Torrent File Probe] Initiating background probe for index ${file.index}...`);
+    const probeUrl = buildTorrentProbeUrl(info.infoHash, file.index);
+    fetch(`/api/probe?url=${encodeURIComponent(probeUrl)}`)
+      .then(res => {
+        if (res.ok) return res.json();
+        throw new Error(`HTTP ${res.status}`);
+      })
+      .then(meta => {
+        logDebug(`[Torrent File Probe] Result: duration=${meta.duration}s, needsTranscode=${meta.needsTranscode}`);
+        setMediaDuration(meta.duration || 0);
+        setNeedsTranscode(meta.needsTranscode !== undefined ? meta.needsTranscode : true);
+        setVcodec(meta.videoCodec || 'h264');
+        setAcodec(meta.audioCodec || 'aac');
+      })
+      .catch(err => {
+        logDebug(`[Torrent File Probe] Background probe failed: ${err.message}`);
+      });
   };
 
   const handleFormSubmit = (e) => {
@@ -695,6 +913,10 @@ export default function App() {
               <Info size={16} />
               <span>History</span>
             </button>
+            <button className="header-btn" title="Open Settings" onClick={() => setShowSettings(true)}>
+              <Settings size={16} />
+              <span>Settings</span>
+            </button>
           </div>
         </div>
       </header>
@@ -771,6 +993,8 @@ export default function App() {
             playerLoaderMessage={playerLoaderMessage}
             onRecoverTorrent={loadTorrent}
             googleAuth={googleAuth}
+            onSyncProgress={updateHistoryProgress}
+            onTorrentStats={setTorrentStats}
           />
 
           {/* Torrent Files Explorer Drawer */}
@@ -798,6 +1022,83 @@ export default function App() {
           onClearAll={clearAllHistory}
         />
       </div>
+
+      {/* Settings Panel dialog drawer */}
+      <dialog 
+        ref={settingsDialogRef} 
+        id="settings-dialog" 
+        className="glass-dialog admin-dialog"
+        onClose={() => setShowSettings(false)}
+      >
+        <div className="dialog-header" style={{ padding: '1.25rem 1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0, color: 'white' }}>
+            <Settings size={18} style={{ color: 'var(--accent-primary)' }} />
+            Application Settings
+          </h3>
+          <button 
+            className="close-dialog-btn" 
+            aria-label="Close settings"
+            onClick={() => setShowSettings(false)}
+            style={{ background: 'none', border: 'none', color: 'var(--text-dimmed)', cursor: 'pointer' }}
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="dialog-body admin-dialog-body" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          <div className="auth-input-group" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <label htmlFor="settings-client-id" style={{ fontSize: '0.85rem', color: 'rgba(255,255,255,0.7)', fontWeight: '500' }}>Google OAuth Client ID</label>
+            <input 
+              type="text" 
+              id="settings-client-id"
+              placeholder="Paste Google OAuth Client ID here..."
+              defaultValue={googleAuth.clientId || ''}
+              onChange={(e) => {
+                googleAuth.setClientId(e.target.value.trim());
+              }}
+              style={{
+                background: 'rgba(255,255,255,0.03)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: '6px',
+                padding: '0.5rem 0.75rem',
+                color: 'white',
+                fontSize: '0.85rem',
+                width: '100%',
+                boxSizing: 'border-box'
+              }}
+            />
+            <p style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.4)', margin: '0.25rem 0 0 0', lineHeight: '1.4' }}>
+              Configure a Google OAuth Client ID to bypass download quotas on private Google Drive files. The client ID is stored locally in your browser.
+            </p>
+          </div>
+          
+          <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '1.25rem', marginTop: '0.5rem' }}>
+            <h4 style={{ margin: '0 0 0.5rem 0', color: '#ef4444', fontSize: '0.85rem', fontWeight: '600' }}>Danger Zone</h4>
+            <button 
+              onClick={() => {
+                if (window.confirm('This will wipe all local users, stream history, and settings. Are you sure?')) {
+                  localStorage.clear();
+                  addToast('All local storage wiped. Reloading page...', 'success');
+                  setTimeout(() => window.location.reload(), 1000);
+                }
+              }}
+              style={{
+                background: 'rgba(239, 68, 68, 0.1)',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                color: '#ef4444',
+                padding: '0.5rem 1rem',
+                borderRadius: '6px',
+                fontSize: '0.85rem',
+                cursor: 'pointer',
+                fontWeight: '500',
+                transition: 'all 0.2s'
+              }}
+            >
+              Clear All Local Data & Reset
+            </button>
+          </div>
+        </div>
+      </dialog>
 
       {/* Admin Panel dialog drawer */}
       <AdminDashboard 

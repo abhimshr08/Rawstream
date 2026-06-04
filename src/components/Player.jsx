@@ -19,7 +19,9 @@ export default function Player({
   playerLoading,
   playerLoaderMessage,
   onRecoverTorrent,
-  googleAuth            // { token, loading, error, requestToken, clearToken }
+  googleAuth,            // { token, loading, error, requestToken, clearToken }
+  onSyncProgress,
+  onTorrentStats          // Added callback for client-side stats
 }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -36,7 +38,26 @@ export default function Player({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isTheater, setIsTheater] = useState(false);
   const [useEmbed, setUseEmbed] = useState(false);
-  const [webtorLoaded, setWebtorLoaded] = useState(false);
+  const [webtorrentLoaded, setWebtorrentLoaded] = useState(false);
+  const [torrentPlayerMode, setTorrentPlayerMode] = useState('server'); // 'server' or 'p2p'
+
+  const webtorrentClientRef = useRef(null);
+  const webtorrentStatsIntervalRef = useRef(null);
+
+  const TORRENT_WEBRTC_TRACKERS = [
+    'wss://tracker.openwebtorrent.com',
+    'wss://tracker.fastcast.nz',
+    'wss://tracker.btorrent.xyz',
+    'wss://tracker.webtorrent.io'
+  ];
+
+  const ensureWebTorrentTrackers = (magnetUri) => {
+    if (!magnetUri || !magnetUri.startsWith('magnet:?')) return magnetUri;
+    if (magnetUri.includes('wss://')) return magnetUri;
+    const separator = magnetUri.includes('?') ? '&' : '?';
+    const trackerParams = TORRENT_WEBRTC_TRACKERS.map(t => `tr=${encodeURIComponent(t)}`).join('&');
+    return `${magnetUri}${separator}${trackerParams}`;
+  };
 
   // Synchronize native fullscreen changes
   useEffect(() => {
@@ -49,59 +70,198 @@ export default function Player({
     };
   }, []);
 
-  // Dynamically load the Webtor Embed SDK script (CDN)
+  // Global Keyboard Shortcuts — refs filled in after the functions are defined below
+  const skipRef = useRef(null);
+  const toggleFullscreenRef = useRef(null);
+  const toggleTheaterRef = useRef(null);
+
+  // Dynamically load WebTorrent SDK script (CDN) on demand
   useEffect(() => {
-    if (window.webtor) {
-      setWebtorLoaded(true);
+    if (currentVideo?.service !== 'torrent' || torrentPlayerMode !== 'p2p') return;
+    if (window.WebTorrent) {
+      setWebtorrentLoaded(true);
       return;
     }
-    const script = document.createElement('script');
-    script.src = 'https://cdn.jsdelivr.net/npm/@webtor/embed-sdk-js/dist/index.min.js';
-    script.async = true;
-    script.charset = 'utf-8';
-    script.onload = () => {
-      logDebug('[Webtor] Embed SDK script loaded successfully.');
-      setWebtorLoaded(true);
-    };
-    script.onerror = () => {
-      logDebug('[Webtor] Failed to load Webtor Embed SDK script.');
-    };
-    document.head.appendChild(script);
-  }, []);
 
-  // Initialize Webtor player when currentVideo is torrent and SDK is loaded
+    let mounted = true;
+    const loader = async () => {
+      logDebug('[WebTorrent] Loading WebTorrent SDK dynamically via import...');
+      try {
+        const module = await import('https://cdn.jsdelivr.net/npm/webtorrent@2/dist/webtorrent.min.js');
+        if (!mounted) return;
+        const WebTorrentConstructor = module.default || module;
+        window.WebTorrent = WebTorrentConstructor;
+        logDebug('[WebTorrent] WebTorrent SDK imported successfully.');
+        setWebtorrentLoaded(true);
+      } catch (err) {
+        if (!mounted) return;
+        logDebug('[WebTorrent] Failed to import WebTorrent SDK. Falling back to server stream.');
+        setWebtorrentLoaded(false);
+        setTorrentPlayerMode('server');
+        addToast('Browser P2P failed to load WebTorrent SDK. Switching to server mode.', 'warning');
+      }
+    };
+
+    loader();
+
+    return () => {
+      mounted = false;
+    };
+  }, [currentVideo, torrentPlayerMode]);
+
   useEffect(() => {
-    if (currentVideo?.service !== 'torrent' || !webtorLoaded) return;
+    if (currentVideo?.service !== 'torrent' || torrentPlayerMode !== 'p2p' || webtorrentLoaded) return;
+    const fallbackTimer = setTimeout(() => {
+      if (!webtorrentLoaded) {
+        logDebug('[WebTorrent] SDK did not load in time. Switching to Server Stream mode.');
+        addToast('Browser P2P stream unavailable. Switching to Server Stream mode.', 'warning');
+        setTorrentPlayerMode('server');
+      }
+    }, 10000);
+    return () => clearTimeout(fallbackTimer);
+  }, [currentVideo, torrentPlayerMode, webtorrentLoaded]);
 
-    // Webtor player requires a clean container element to boot
-    const container = document.getElementById('webtor-player-container');
-    if (container) {
-      container.innerHTML = ''; // wipe previous iframes/instances
+  // Initialize WebTorrent direct client-side player when mode is p2p
+  useEffect(() => {
+    if (currentVideo?.service !== 'torrent' || !webtorrentLoaded || torrentPlayerMode !== 'p2p') {
+      if (onTorrentStats) onTorrentStats(null);
+      return;
     }
 
-    logDebug(`[Webtor] Initializing torrent stream for infoHash: ${currentVideo.id}`);
+    logDebug(`[WebTorrent] Initializing P2P direct stream for infoHash: ${currentVideo.id}`);
+
+    // Create a client
+    if (!webtorrentClientRef.current && window.WebTorrent) {
+      try {
+        webtorrentClientRef.current = new window.WebTorrent();
+      } catch (err) {
+        logDebug(`[WebTorrent] Client init error: ${err.message}`);
+        addToast('Failed to initialize WebTorrent client in browser', 'error');
+        return;
+      }
+    }
+    const client = webtorrentClientRef.current;
+    if (!client) return;
 
     // Standardize magnet URI format
-    const magnetUri = currentVideo.originalUrl.startsWith('magnet:')
+    let magnetUri = currentVideo.originalUrl.startsWith('magnet:')
       ? currentVideo.originalUrl
       : `magnet:?xt=urn:btih:${currentVideo.id}`;
+    magnetUri = ensureWebTorrentTrackers(magnetUri);
 
-    window.webtor = window.webtor || [];
-    window.webtor.push({
-      id: 'webtor-player-container',
-      magnet: magnetUri,
-      width: '100%',
-      height: '100%',
-      features: {
-        chromecast: false
-      },
-      on: function(e) {
-        if (e.name === 'ready') {
-          logDebug('[Webtor] Torrent stream player ready in viewport.');
+    setIsBuffering(true);
+    setLoaderMessage('Connecting to WebRTC torrent swarm...');
+
+    // Setup an initial peer warning timer
+    const peerTimer = setTimeout(() => {
+      if (client.torrents.length > 0 && client.torrents[0].numPeers === 0) {
+        addToast('Direct P2P has 0 WebRTC peers. Try switching to Server Stream mode if buffering stalls.', 'info');
+      }
+    }, 12000);
+
+    try {
+      client.add(magnetUri, { announce: TORRENT_WEBRTC_TRACKERS }, (torrent) => {
+        logDebug(`[WebTorrent] Metadata parsed successfully. Torrent name: ${torrent.name}`);
+
+        // Find first playable video file
+        const file = torrent.files.find(f => {
+          const name = f.name.toLowerCase();
+          return name.endsWith('.mp4') || name.endsWith('.webm') || name.endsWith('.mkv') ||
+                 name.endsWith('.avi') || name.endsWith('.mov') || name.endsWith('.ogv') ||
+                 name.endsWith('.m4v') || name.endsWith('.ts');
+        });
+
+        if (!file) {
+          logDebug('[WebTorrent] No playable video files found in this torrent.');
+          setVideoError({ type: 'generic', message: 'No playable video files found in this torrent.' });
+          setIsBuffering(false);
+          return;
+        }
+
+        logDebug(`[WebTorrent] Streaming direct file: ${file.name}`);
+        const video = videoRef.current;
+        if (video) {
+          // Clear previous source
+          video.removeAttribute('src');
+          video.load();
+
+          // Render file directly in standard video tag using browser MSE
+          file.renderTo(video, { 
+            autoplay: true,
+            controls: false
+          }, (err) => {
+            if (err) {
+              logDebug(`[WebTorrent] renderTo failed: ${err.message}. Trying Blob URL fallback...`);
+              file.getBlobURL((blobErr, url) => {
+                if (!blobErr && video) {
+                  video.src = url;
+                  video.play().catch(playErr => logDebug(`Play blocked: ${playErr.message}`));
+                } else if (blobErr) {
+                  logDebug(`[WebTorrent] Blob fallback failed: ${blobErr.message}`);
+                  if (torrentPlayerMode === 'p2p') {
+                    logDebug('[WebTorrent] Direct P2P rendering failed, switching to Server Stream fallback.');
+                    setTorrentPlayerMode('server');
+                    addToast('Browser P2P stream failed; using server stream fallback.', 'warning');
+                  }
+                }
+              });
+            }
+          });
+        }
+
+        torrent.on('warning', (warning) => {
+          logDebug(`[WebTorrent] warning: ${warning?.message || warning}`);
+        });
+
+        torrent.on('noPeers', (announceType) => {
+          logDebug(`[WebTorrent] noPeers event (${announceType || 'unknown'}).`);
+          addToast('Unable to find peers for browser P2P. If this persists, switch to Server Stream mode.', 'warning');
+        });
+
+        setIsBuffering(false);
+
+        // Periodically push stats update to parent dashboard
+        if (webtorrentStatsIntervalRef.current) clearInterval(webtorrentStatsIntervalRef.current);
+        webtorrentStatsIntervalRef.current = setInterval(() => {
+          if (onTorrentStats) {
+            onTorrentStats({
+              name: file.name,
+              speed: torrent.downloadSpeed,
+              peers: torrent.numPeers,
+              progress: torrent.progress
+            });
+          }
+        }, 1500);
+      });
+
+      client.on('error', (err) => {
+        logDebug(`[WebTorrent] Swarm Client error: ${err.message}`);
+      });
+
+    } catch (err) {
+      logDebug(`[WebTorrent] client.add failed: ${err.message}`);
+      setIsBuffering(false);
+    }
+
+    return () => {
+      clearTimeout(peerTimer);
+      if (webtorrentStatsIntervalRef.current) {
+        clearInterval(webtorrentStatsIntervalRef.current);
+        webtorrentStatsIntervalRef.current = null;
+      }
+      if (webtorrentClientRef.current) {
+        logDebug('[WebTorrent] Destroying client instance...');
+        try {
+          webtorrentClientRef.current.destroy(() => {
+            webtorrentClientRef.current = null;
+          });
+        } catch (e) {
+          webtorrentClientRef.current = null;
         }
       }
-    });
-  }, [currentVideo, webtorLoaded]);
+      if (onTorrentStats) onTorrentStats(null);
+    };
+  }, [currentVideo, webtorrentLoaded, torrentPlayerMode]);
 
   const toggleFullscreen = () => {
     const container = playerRef.current;
@@ -119,6 +279,73 @@ export default function Player({
   const toggleTheater = () => {
     setIsTheater(prev => !prev);
   };
+
+  // Keep shortcut refs always up-to-date so the keydown listener doesn't capture stale closures
+  useEffect(() => { skipRef.current = skip; });
+  useEffect(() => { toggleFullscreenRef.current = toggleFullscreen; });
+  useEffect(() => { toggleTheaterRef.current = toggleTheater; });
+
+  // Register global keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // Don't fire shortcuts when focus is in a text input / editable element
+      const tag = document.activeElement?.tagName?.toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || document.activeElement?.isContentEditable) return;
+
+      const video = videoRef.current;
+
+      switch (e.key) {
+        case ' ':
+        case 'Spacebar':
+          e.preventDefault();
+          if (!video || showPlaceholder) return;
+          if (video.paused) {
+            video.play().catch(() => {});
+          } else {
+            video.pause();
+          }
+          break;
+        case 'ArrowLeft':
+          e.preventDefault();
+          if (skipRef.current) skipRef.current(-10);
+          break;
+        case 'ArrowRight':
+          e.preventDefault();
+          if (skipRef.current) skipRef.current(10);
+          break;
+        case 'ArrowUp':
+          e.preventDefault();
+          if (!video) return;
+          video.volume = Math.min(1, parseFloat((video.volume + 0.1).toFixed(2)));
+          break;
+        case 'ArrowDown':
+          e.preventDefault();
+          if (!video) return;
+          video.volume = Math.max(0, parseFloat((video.volume - 0.1).toFixed(2)));
+          break;
+        case 'm':
+        case 'M':
+          if (!video) return;
+          video.muted = !video.muted;
+          break;
+        case 'f':
+        case 'F':
+          e.preventDefault();
+          if (toggleFullscreenRef.current) toggleFullscreenRef.current();
+          break;
+        case 't':
+        case 'T':
+          e.preventDefault();
+          if (toggleTheaterRef.current) toggleTheaterRef.current();
+          break;
+        default:
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showPlaceholder]);
 
   // Layout State
   const [videoRotation, setVideoRotation] = useState(0);
@@ -153,6 +380,13 @@ export default function Player({
   // Torrent Recovery tracking refs
   const recoveryAttemptsRef = useRef(0);
   const recoveryTimeRef = useRef(0);
+  const lastVideoIdRef = useRef(null);
+  const lastStreamUrlRef = useRef(null);
+  const lastNeedsTranscodeRef = useRef(needsTranscode);
+  const lastQualityRef = useRef(selectedQuality);
+  const lastVcodecRef = useRef(vcodec);
+  const lastAcodecRef = useRef(acodec);
+  const lastUseEmbedRef = useRef(false);
   const initialRetryCountRef = useRef(0); // limit initial-load retries
   const MAX_TORRENT_RECOVERY_ATTEMPTS = 2;
 
@@ -164,6 +398,29 @@ export default function Player({
     const secs = Math.floor(seconds % 60);
     const pad = (n) => String(n).padStart(2, '0');
     return hrs > 0 ? `${pad(hrs)}:${pad(mins)}:${pad(secs)}` : `${pad(mins)}:${pad(secs)}`;
+  };
+
+  const fetchProbedDurationIfNeeded = async () => {
+    if (mediaDuration > 0 || !currentVideo) return;
+    
+    let targetUrl = currentVideo.streamUrl;
+    if (currentVideo.service === 'torrent') {
+      targetUrl = `/api/torrent/stream?infoHash=${encodeURIComponent(currentVideo.id)}&fileIndex=${encodeURIComponent(currentVideo.torrentFileIndex || 0)}`;
+    }
+    
+    logDebug(`[Player] Runtime probing stream duration: ${targetUrl}`);
+    try {
+      const probeRes = await fetch(`/api/probe?url=${encodeURIComponent(targetUrl)}`);
+      if (probeRes.ok) {
+        const meta = await probeRes.json();
+        if (meta.duration && meta.duration > 0) {
+          logDebug(`[Player] Runtime probe success: duration=${meta.duration}s`);
+          setMediaDuration(meta.duration);
+        }
+      }
+    } catch (err) {
+      logDebug(`[Player] Runtime probe failed: ${err.message}`);
+    }
   };
 
   // Video Actions
@@ -188,13 +445,14 @@ export default function Player({
       const seekTime = Math.max(0, Math.min(mediaDuration, video.currentTime + seconds));
       debounceSeekGDrive(seekTime);
     } else {
-      const duration = needsTranscode ? mediaDuration : video.duration;
-      const currentTime = needsTranscode 
+      const duration = mediaDuration > 0 ? mediaDuration : video.duration;
+      const useTranscode = needsTranscode || (selectedQuality && selectedQuality !== 'original');
+      const currentTime = useTranscode 
         ? (transcodeStartTime + video.currentTime) 
         : video.currentTime;
       const seekTime = Math.max(0, Math.min(duration || 0, currentTime + seconds));
 
-      if (needsTranscode) {
+      if (useTranscode) {
         debounceSeekTranscoded(seekTime);
       } else {
         video.currentTime = seekTime;
@@ -222,36 +480,73 @@ export default function Player({
       .catch((err) => logDebug(`[GDrive] Seek play blocked: ${err.message}`));
   };
 
-  // Seek Transcoded stream
-  const seekTranscodedStream = (seconds) => {
-    if (!currentVideo) return;
-    logDebug(`Seeking transcoded stream to: ${formatTime(seconds)}`);
+  // Seek Transcoded stream (by appending the start parameter and reloading src)
+  const seekTranscodedStream = (seconds, qualityOverride = null) => {
+    const video = videoRef.current;
+    if (!video || !currentVideo) return;
+
+    const quality = qualityOverride || selectedQuality;
+    logDebug(`[Transcode] Seeking to: ${formatTime(seconds)} at quality ${quality}`);
     setIsBuffering(true);
     setLoaderMessage('Seeking transcoded stream...');
+
     setTranscodeStartTime(seconds);
 
-    const rawUrl = currentVideo.rawStreamUrl || currentVideo.streamUrl;
-    let seekUrl = `/api/stream?url=${encodeURIComponent(rawUrl)}&transcode=true&vcodec=${encodeURIComponent(vcodec)}&acodec=${encodeURIComponent(acodec)}&start=${Math.floor(seconds)}`;
-    
-    if (selectedQuality && selectedQuality !== 'original') {
-      seekUrl += `&quality=${selectedQuality}`;
+    // Reconstruct the URL with the start parameter
+    let rawUrl = currentVideo.rawStreamUrl || currentVideo.streamUrl;
+
+    // Extract inner URL if rawUrl is already a transcoded stream wrapper to prevent recursive transcoding
+    try {
+      if (rawUrl && (rawUrl.includes('/api/stream?url=') || rawUrl.includes('/api/stream?'))) {
+        const parsed = new URL(rawUrl, window.location.origin);
+        if (parsed.pathname === '/api/stream' && parsed.searchParams.has('url')) {
+          const inner = parsed.searchParams.get('url');
+          if (inner) {
+            rawUrl = inner;
+          }
+        }
+      }
+    } catch (e) {
+      // ignore
     }
 
-    const video = videoRef.current;
-    video.src = seekUrl;
+    let newSrc = '';
+    const qualityParam = quality && quality !== 'original' ? `&quality=${quality}` : '';
+
+    if (currentVideo.service === 'torrent' || (rawUrl && rawUrl.includes('/api/torrent/stream'))) {
+      let infoHash = currentVideo.id;
+      let fileIndex = currentVideo.torrentFileIndex || 0;
+      
+      try {
+        const parsedTorrentUrl = new URL(rawUrl, window.location.origin);
+        if (parsedTorrentUrl.searchParams.has('infoHash')) {
+          infoHash = parsedTorrentUrl.searchParams.get('infoHash');
+        }
+        if (parsedTorrentUrl.searchParams.has('fileIndex')) {
+          fileIndex = parsedTorrentUrl.searchParams.get('fileIndex');
+        }
+      } catch (e) {}
+
+      const target = `/api/torrent/stream?infoHash=${encodeURIComponent(infoHash)}&fileIndex=${encodeURIComponent(fileIndex)}`;
+      newSrc = `/api/stream?url=${encodeURIComponent(target)}&transcode=true${qualityParam}&start=${seconds}`;
+    } else {
+      newSrc = `/api/stream?url=${encodeURIComponent(rawUrl)}&transcode=true&vcodec=${encodeURIComponent(vcodec)}&acodec=${encodeURIComponent(acodec)}${qualityParam}&start=${seconds}`;
+    }
+
+    video.src = newSrc;
     video.load();
     video.play()
-      .then(() => logDebug('Transcoded stream playback resumed.'))
-      .catch((err) => logDebug(`Playback resume rejected: ${err.message}`));
+      .then(() => logDebug('[Transcode] Resumed stream after seek.'))
+      .catch((err) => logDebug(`[Transcode] Seek play blocked: ${err.message}`));
   };
 
   // Debounced Seek wrappers to prevent server-side FFmpeg process thrashing
-  const debounceSeekTranscoded = (seconds) => {
+  const debounceSeekTranscoded = (seconds, qualityOverride = null) => {
     if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
     setIsBuffering(true);
     setLoaderMessage('Preparing seek stream...');
     seekTimeoutRef.current = setTimeout(() => {
-      seekTranscodedStream(seconds);
+      seekTranscodedStream(seconds, qualityOverride);
     }, 400);
   };
 
@@ -264,20 +559,14 @@ export default function Player({
     }, 400);
   };
 
+  // Expose seeking to window for Playwright/Headful test automation
+  if (typeof window !== 'undefined') {
+    window.seekTranscodedStreamForTesting = debounceSeekTranscoded;
+  }
+
   const resetTorrentCache = async () => {
-    if (!currentVideo || currentVideo.service !== 'torrent' || !currentVideo.id) return false;
-    try {
-      const resetRes = await authenticatedFetch(`/api/torrent/reset?infoHash=${encodeURIComponent(currentVideo.id)}`);
-      if (!resetRes.ok) {
-        const body = await resetRes.text();
-        throw new Error(body || resetRes.statusText);
-      }
-      logDebug('[Recovery] Server-side torrent cache reset successfully.');
-      return true;
-    } catch (err) {
-      logDebug(`[Recovery] Failed to reset torrent cache: ${err.message}`);
-      return false;
-    }
+    logDebug('[Recovery] Client-side torrent cache reset simulated.');
+    return true;
   };
 
   // Resume playback check
@@ -320,21 +609,20 @@ export default function Player({
     const video = videoRef.current;
     if (!video || !currentVideo || !session.token) return;
 
+    const useTranscode = needsTranscode || (selectedQuality && selectedQuality !== 'original');
     let displayTime = video.currentTime;
-    if (needsTranscode) {
+    if (useTranscode) {
       displayTime = transcodeStartTime + video.currentTime;
     }
 
-    const duration = mediaDuration || video.duration;
+    const duration = mediaDuration > 0 ? mediaDuration : video.duration;
 
     if (isNaN(displayTime) || isNaN(duration) || duration <= 0) return;
 
     try {
-      await authenticatedFetch(`/api/history/${currentVideo.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ currentTime: displayTime, duration })
-      });
+      if (onSyncProgress) {
+        onSyncProgress(currentVideo.id, displayTime, duration);
+      }
     } catch (e) {
       console.error('Failed to sync progress:', e);
     }
@@ -409,6 +697,10 @@ export default function Player({
     // Reset loader message so stale 'Seeking...' text never lingers after seek completes
     setLoaderMessage('Buffering stream...');
     
+    if (mediaDuration === 0) {
+      fetchProbedDurationIfNeeded();
+    }
+
     // Progress syncing
     if (syncIntervalRef.current) clearInterval(syncIntervalRef.current);
     syncIntervalRef.current = setInterval(syncPlaybackProgress, 5000);
@@ -479,6 +771,14 @@ export default function Player({
         } else {
           // Max retries reached - show actionable error
           logDebug('[Playback] Max initial retries reached. Torrent may have no peers or be invalid.');
+          if (torrentPlayerMode === 'p2p') {
+            logDebug('[Playback] Switching to Server Stream mode after Browser P2P failed.');
+            setTorrentPlayerMode('server');
+            addToast('Browser P2P failed to load. Switching to Server Stream mode.', 'warning');
+            setLoaderMessage('Switching to server stream...');
+            setIsBuffering(true);
+            return;
+          }
           setVideoError({ type: 'generic', message: 'Cannot connect to torrent peers. The torrent may be dead or have no seeders. Try a different magnet link.' });
           setIsBuffering(false);
           return;
@@ -507,62 +807,23 @@ export default function Player({
     const proxiedUrl = video.src;
     logDebug(`Video loading failed. URL: ${proxiedUrl}`);
 
-    // If we are playing an authenticated stream, check its error status directly
-    if (proxiedUrl && proxiedUrl.includes('/api/gdrive-auth-stream')) {
-      try {
-        const check = await fetch(proxiedUrl, { method: 'HEAD' }).catch(() => null);
-        if (check) {
-          if (check.status === 401) {
-            if (googleAuth) googleAuth.clearToken();
-            setVideoError({ type: 'quota', message: 'Google authentication expired or invalid. Please sign in again.' });
-            return;
-          }
-          if (check.status === 403) {
-            setVideoError({ type: 'access', message: 'Google Drive file access restricted. Ensure your Google account has access to this file.' });
-            return;
-          }
-        }
-      } catch (err) {
-        logDebug(`Auth stream HEAD check failed: ${err.message}`);
-      }
-      setVideoError({ type: 'generic', message: 'Playback of authenticated Google Drive stream failed.' });
+    // If we are playing an authenticated stream or standard Google Drive stream
+    if (proxiedUrl && (proxiedUrl.includes('googleapis.com/drive') || proxiedUrl.includes('/api/gdrive-auth-stream'))) {
+      if (googleAuth) googleAuth.clearToken();
+      setVideoError({ type: 'quota', message: 'Google Drive authentication expired or access restricted. Please sign in again.' });
       return;
     }
 
-    // For Google Drive: use the lightweight /api/resolve endpoint to check error type
-    // (avoids re-fetching the full stream which would hit quota again)
+    // For Google Drive: client-side warning diagnostics
     if (currentVideo?.service === 'google' && currentVideo?.id) {
-      try {
-        const check = await authenticatedFetch(`/api/resolve?fileId=${encodeURIComponent(currentVideo.id)}`);
-        if (check.status === 429) {
-          setVideoError({ type: 'quota', message: 'Google Drive quota exceeded.' });
-          return;
-        }
-        if (check.status === 403) {
-          setVideoError({ type: 'access', message: 'File access restricted. Set sharing to "Anyone with the link can view".' });
-          return;
-        }
-      } catch (err) {
-        logDebug(`GDrive resolve check failed: ${err.message}`);
+      if (googleAuth && googleAuth.token) {
+        setVideoError({ type: 'access', message: 'Google Drive file access restricted. Ensure your Google account has permission to view this file.' });
+      } else {
+        setVideoError({ type: 'quota', message: 'Google Drive file is restricted or quota has been exceeded.' });
       }
-    } else if (proxiedUrl && proxiedUrl.includes('/api/stream')) {
-      try {
-        // Use HEAD to avoid downloading data, just check status
-        const check = await authenticatedFetch(proxiedUrl, { method: 'HEAD' }).catch(() => null);
-        if (check) {
-          if (check.status === 429) {
-            setVideoError({ type: 'quota', message: 'Google Drive quota exceeded.' });
-            return;
-          }
-          if (check.status === 403 || check.status === 404) {
-            setVideoError({ type: 'access', message: 'File access restricted. Verify file sharing permissions.' });
-            return;
-          }
-        }
-      } catch (err) {
-        logDebug(`Diagnostic HEAD check failed: ${err.message}`);
-      }
+      return;
     }
+
     setVideoError({ type: 'generic', message: 'Playback failed. Ensure file permissions are public.' });
     addToast('Playback failed.', 'error');
   };
@@ -622,12 +883,45 @@ export default function Player({
     return styles;
   };
 
-  // Watch currentVideo changes to load source
+  // Watch currentVideo and other playback parameters changes to load/reload source
   useEffect(() => {
-    setUseEmbed(false);
-    if (!currentVideo) return;
+    logDebug(`[Player useEffect] Triggered: currentVideo=${currentVideo?.id}, useEmbed=${useEmbed}, needsTranscode=${needsTranscode}`);
+    if (!currentVideo) {
+      setUseEmbed(false);
+      return;
+    }
+
+    const isSameVideo = lastVideoIdRef.current === currentVideo.id;
+    const streamUrlChanged = lastStreamUrlRef.current !== currentVideo.streamUrl;
+    const transcodeChanged = lastNeedsTranscodeRef.current !== needsTranscode;
+    const qualityChanged = lastQualityRef.current !== selectedQuality;
+    const vcodecChanged = lastVcodecRef.current !== vcodec;
+    const acodecChanged = lastAcodecRef.current !== acodec;
+    const embedChanged = lastUseEmbedRef.current !== useEmbed;
+
+    logDebug(`[Player useEffect] State: isSameVideo=${isSameVideo}, streamUrlChanged=${streamUrlChanged}, transcodeChanged=${transcodeChanged}, qualityChanged=${qualityChanged}, vcodecChanged=${vcodecChanged}, acodecChanged=${acodecChanged}, embedChanged=${embedChanged}, lastUseEmbed=${lastUseEmbedRef.current}`);
+
+    // Reset embed state only if we switch to a different video
+    if (!isSameVideo) {
+      logDebug(`[Player useEffect] Video changed. Resetting useEmbed to false.`);
+      setUseEmbed(false);
+    }
+
+    lastVideoIdRef.current = currentVideo.id;
+    lastStreamUrlRef.current = currentVideo.streamUrl;
+    lastNeedsTranscodeRef.current = needsTranscode;
+    lastQualityRef.current = selectedQuality;
+    lastVcodecRef.current = vcodec;
+    lastAcodecRef.current = acodec;
+    lastUseEmbedRef.current = useEmbed;
+
+    if (isSameVideo && !streamUrlChanged && !transcodeChanged && !qualityChanged && !vcodecChanged && !acodecChanged && !embedChanged) {
+      logDebug(`[Player useEffect] No parameter changes. Skipping source load.`);
+      return;
+    }
 
     if (currentVideo.error) {
+      logDebug(`[Player useEffect] currentVideo has error: ${currentVideo.error}`);
       setShowPlaceholder(false);
       if (currentVideo.error === 'QUOTA_EXCEEDED') {
         setVideoError({ type: 'quota', message: 'Google Drive quota exceeded.' });
@@ -644,14 +938,22 @@ export default function Player({
     setVideoError(null);
     setTranscodeStartTime(0);
 
-    // If it's a torrent, we initialize Webtor instead of standard HTML5 video tag
-    if (currentVideo.service === 'torrent') {
+    // For torrent server streams we use the HTML5 player only in server mode.
+    // In Browser P2P mode we let the WebTorrent effect manage the video source.
+    const isServerTorrent = currentVideo.service === 'torrent' && torrentPlayerMode === 'server' && 
+      (currentVideo.streamUrl?.includes('/api/stream') || 
+       currentVideo.streamUrl?.includes('/api/torrent/stream'));
+    if (currentVideo.service === 'torrent' && !isServerTorrent) {
       setIsBuffering(false);
       return;
     }
 
     const video = videoRef.current;
-    if (!video) return;
+    logDebug(`[Player useEffect] videoRef.current exists: ${!!video}`);
+    if (!video) {
+      logDebug(`[Player useEffect] videoRef.current is null! Returning early.`);
+      return;
+    }
 
     // Check if we are recovering from a previous state
     initialRetryCountRef.current = 0; // Reset retry counter for new video
@@ -675,13 +977,65 @@ export default function Player({
       }
     } else {
       recoveryAttemptsRef.current = 0;
-      video.src = currentVideo.streamUrl;
+      
+      let initialSrc = currentVideo.streamUrl;
+      let extractedRawUrl = currentVideo.rawStreamUrl || currentVideo.streamUrl;
+
+      // Extract inner URL if it's already a transcoded wrapper to prevent recursive transcoding
+      try {
+        const checkUrl = currentVideo.streamUrl;
+        if (checkUrl && (checkUrl.includes('/api/stream?url=') || checkUrl.includes('/api/stream?'))) {
+          const parsed = new URL(checkUrl, window.location.origin);
+          if (parsed.pathname === '/api/stream' && parsed.searchParams.has('url')) {
+            const inner = parsed.searchParams.get('url');
+            if (inner) {
+              initialSrc = inner;
+              if (extractedRawUrl && (extractedRawUrl.includes('/api/stream?url=') || extractedRawUrl.includes('/api/stream?'))) {
+                extractedRawUrl = inner;
+              }
+            }
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
+
+      const isServerTorrentRedef = currentVideo.service === 'torrent' && torrentPlayerMode === 'server';
+      const useTranscode = needsTranscode || (selectedQuality && selectedQuality !== 'original');
+      
+      if (useTranscode) {
+        const qualityParam = selectedQuality && selectedQuality !== 'original' ? `&quality=${encodeURIComponent(selectedQuality)}` : '';
+        if (isServerTorrentRedef || (extractedRawUrl && extractedRawUrl.includes('/api/torrent/stream'))) {
+          let infoHash = currentVideo.id;
+          let fileIndex = currentVideo.torrentFileIndex || 0;
+          try {
+            const parsedTorrentUrl = new URL(extractedRawUrl, window.location.origin);
+            if (parsedTorrentUrl.searchParams.has('infoHash')) {
+              infoHash = parsedTorrentUrl.searchParams.get('infoHash');
+            }
+            if (parsedTorrentUrl.searchParams.has('fileIndex')) {
+              fileIndex = parsedTorrentUrl.searchParams.get('fileIndex');
+            }
+          } catch (e) {}
+
+          const target = `/api/torrent/stream?infoHash=${encodeURIComponent(infoHash)}&fileIndex=${encodeURIComponent(fileIndex)}`;
+          initialSrc = `/api/stream?url=${encodeURIComponent(target)}&transcode=true${qualityParam}`;
+        } else if (currentVideo.service !== 'torrent') {
+          initialSrc = `/api/stream?url=${encodeURIComponent(extractedRawUrl)}&transcode=true&vcodec=${encodeURIComponent(vcodec)}&acodec=${encodeURIComponent(acodec)}${qualityParam}`;
+        }
+      } else if (currentVideo.service === 'local') {
+        initialSrc = `/api/stream?url=${encodeURIComponent(extractedRawUrl)}`;
+      }
+      
+      logDebug(`[Player useEffect] Setting video.src to: ${initialSrc}`);
+      video.src = initialSrc;
       video.load();
       setIsBuffering(true);
       setLoaderMessage('Buffering stream...');
 
       checkForResumeProgress(currentVideo.id);
 
+      logDebug('[Player useEffect] Invoking video.play()...');
       video.play()
         .then(() => logDebug('Playback autoplay initiated.'))
         .catch((err) => {
@@ -694,7 +1048,7 @@ export default function Player({
       video.removeAttribute('src');
       video.load();
     };
-  }, [currentVideo]);
+  }, [currentVideo, torrentPlayerMode, needsTranscode, selectedQuality, vcodec, acodec, useEmbed]);
 
   // Clean up timers on unmount
   useEffect(() => {
@@ -705,7 +1059,6 @@ export default function Player({
       if (resumeTimeoutRef.current) clearTimeout(resumeTimeoutRef.current);
       if (visualizerAnimRef.current) cancelAnimationFrame(visualizerAnimRef.current);
       if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
-      clearTorrentPolling();
     };
   }, []);
 
@@ -731,14 +1084,82 @@ export default function Player({
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
     >
+      {/* Torrent Streaming Mode Toggle */}
+      {currentVideo?.service === 'torrent' && !showPlaceholder && (
+        <div className="torrent-mode-selector" style={{
+          position: 'absolute',
+          top: '16px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          zIndex: 100,
+          display: 'flex',
+          gap: '4px',
+          padding: '4px',
+          borderRadius: '8px',
+          background: 'rgba(10, 10, 15, 0.75)',
+          backdropFilter: 'blur(12px)',
+          border: '1px solid rgba(255, 255, 255, 0.08)',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
+          pointerEvents: 'auto'
+        }}>
+          <button
+            type="button"
+            onClick={() => {
+              logDebug('[Player] Switching to Server Stream Mode');
+              setTorrentPlayerMode('server');
+            }}
+            style={{
+              padding: '6px 12px',
+              fontSize: '0.75rem',
+              fontWeight: '600',
+              borderRadius: '6px',
+              border: 'none',
+              cursor: 'pointer',
+              color: torrentPlayerMode === 'server' ? 'white' : 'rgba(255,255,255,0.6)',
+              background: torrentPlayerMode === 'server' ? 'var(--accent-primary)' : 'transparent',
+              transition: 'all 0.2s',
+              outline: 'none'
+            }}
+          >
+            ⚡ Server Stream
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              logDebug('[Player] Switching to Browser P2P Mode');
+              setTorrentPlayerMode('p2p');
+            }}
+            style={{
+              padding: '6px 12px',
+              fontSize: '0.75rem',
+              fontWeight: '600',
+              borderRadius: '6px',
+              border: 'none',
+              cursor: 'pointer',
+              color: torrentPlayerMode === 'p2p' ? 'white' : 'rgba(255,255,255,0.6)',
+              background: torrentPlayerMode === 'p2p' ? 'var(--accent-primary)' : 'transparent',
+              transition: 'all 0.2s',
+              outline: 'none'
+            }}
+          >
+            ⚡ Browser P2P
+          </button>
+        </div>
+      )}
+
       {/* Ambient Canvas Glow */}
       <canvas ref={canvasRef} id="ambient-glow-canvas" className="ambient-glow-canvas" />
 
       {/* Loading Overlay */}
       {(isBuffering || playerLoading) && (
-        <div id="player-loader" className="player-loader">
+        <div id="player-loader" className="player-loader" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'center' }}>
           <div className="spinner" />
-          <p>{playerLoaderMessage || loaderMessage}</p>
+          <p style={{ margin: 0 }}>{playerLoaderMessage || loaderMessage}</p>
+          {currentVideo?.service === 'torrent' && torrentPlayerMode === 'p2p' && (
+            <div style={{ marginTop: '0.5rem', fontSize: '0.75rem', color: 'rgba(255,255,255,0.4)', textAlign: 'center', lineHeight: '1.4', maxWidth: '300px' }}>
+              Tip: Browser P2P streaming requires active WebRTC peers. If buffering hangs, switch to the server stream mode.
+            </div>
+          )}
         </div>
       )}
 
@@ -803,9 +1224,9 @@ export default function Player({
                   try {
                     addToast('Signing in with Google...', 'info');
                     const accessToken = await googleAuth.requestToken();
-                    // Switch video to authenticated stream endpoint
-                    const authStreamUrl = `/api/gdrive-auth-stream?fileId=${encodeURIComponent(currentVideo.id)}&token=${encodeURIComponent(accessToken)}`;
-                    logDebug('[GDrive] Switching to authenticated stream after quota bypass...');
+                     // Switch video to authenticated stream endpoint directly on Google APIs
+                     const authStreamUrl = `/api/gdrive-auth-stream?fileId=${encodeURIComponent(currentVideo.id)}&token=${encodeURIComponent(accessToken)}`;
+                     logDebug('[GDrive] Switching to authenticated Google API proxy stream with OAuth...');
                     setVideoError(null);
                     setShowPlaceholder(false);
                     setIsBuffering(true);
@@ -940,22 +1361,8 @@ export default function Player({
         </div>
       )}
 
-      {/* Video element or Google Drive preview iframe fallback or Webtor torrent player */}
-      {currentVideo?.service === 'torrent' ? (
-        <div 
-          id="webtor-player-container" 
-          className="webtor-player-container"
-          style={{ 
-            width: '100%', 
-            height: '100%', 
-            borderRadius: '12px', 
-            overflow: 'hidden', 
-            background: 'black',
-            position: 'relative',
-            zIndex: 10
-          }}
-        />
-      ) : useEmbed ? (
+      {/* Video element or Google Drive preview iframe fallback */}
+      {useEmbed && (
         <iframe
           src={`https://drive.google.com/file/d/${currentVideo.id}/preview`}
           width="100%"
@@ -965,39 +1372,51 @@ export default function Player({
           allowFullScreen
           title="Google Drive Embedded Player"
         />
-      ) : (
+      )}
+
+      {(currentVideo?.service !== 'torrent' || torrentPlayerMode === 'p2p' || torrentPlayerMode === 'server') && !useEmbed && (
         <video
           ref={videoRef}
           id="video-element"
           preload="auto"
           playsInline
           referrerPolicy="no-referrer"
-          style={getVideoStyles()}
+          style={{ ...getVideoStyles(), cursor: 'pointer' }}
+          onClick={togglePlay}
           onPlay={handlePlay}
           onPause={handlePause}
           onEnded={handleEnded}
           onError={handleVideoError}
           onLoadedMetadata={() => {
-            // Sync duration from the video element once the browser parses stream headers.
-            // This is critical for torrent/transcoded streams where we skip pre-probing.
             const video = videoRef.current;
-            if (video && isFinite(video.duration) && video.duration > 0 && mediaDuration === 0) {
-              setMediaDuration(video.duration);
-              logDebug(`[Player] Duration synced from stream: ${video.duration.toFixed(1)}s`);
+            if (video) {
+              const useTranscode = needsTranscode || (selectedQuality && selectedQuality !== 'original');
+              if (isFinite(video.duration) && video.duration > 0 && mediaDuration === 0) {
+                // For transcoded/growing streams, the video.duration is highly inaccurate initially.
+                // Avoid syncing small initial fragment durations (e.g. 4s); wait for runtime probe.
+                if (!useTranscode || video.duration > 30) {
+                  setMediaDuration(video.duration);
+                  logDebug(`[Player] Duration synced from stream: ${video.duration.toFixed(1)}s`);
+                }
+              }
+              if (mediaDuration === 0) {
+                fetchProbedDurationIfNeeded();
+              }
             }
           }}
-          onWaiting={() => { setIsBuffering(true); }}
-          onPlaying={() => { setIsBuffering(false); setLoaderMessage('Buffering stream...'); }}
-          onSeeking={() => { setIsBuffering(true); }}
-          onSeeked={() => { setIsBuffering(false); setLoaderMessage('Buffering stream...'); }}
+          onWaiting={() => { logDebug('[Video Event] waiting (isBuffering => true)'); setIsBuffering(true); }}
+          onPlaying={() => { logDebug('[Video Event] playing (isBuffering => false)'); setIsBuffering(false); setLoaderMessage('Buffering stream...'); }}
+          onSeeking={() => { logDebug('[Video Event] seeking (isBuffering => true)'); setIsBuffering(true); }}
+          onSeeked={() => { logDebug('[Video Event] seeked (isBuffering => false)'); setIsBuffering(false); setLoaderMessage('Buffering stream...'); }}
           onProgress={() => {
             // Update buffer bar from video.buffered ranges
             const video = videoRef.current;
             if (!video || !video.buffered || video.buffered.length === 0) return;
-            const duration = (needsTranscode ? mediaDuration : video.duration) || video.duration;
+            const duration = mediaDuration > 0 ? mediaDuration : video.duration;
             if (!duration || duration <= 0 || !isFinite(duration)) return;
             const bufferedEnd = video.buffered.end(video.buffered.length - 1);
-            const globalBufferedEnd = needsTranscode
+            const useTranscode = needsTranscode || (selectedQuality && selectedQuality !== 'original') || transcodeStartTime > 0 || (video && video.src && video.src.includes('transcode=true'));
+            const globalBufferedEnd = useTranscode
               ? transcodeStartTime + bufferedEnd
               : bufferedEnd;
             setBufferPercent(Math.min(100, (globalBufferedEnd / duration) * 100));
@@ -1009,7 +1428,7 @@ export default function Player({
 
 
       {/* Play Overlay Screen Button */}
-      {!isPlaying && !showPlaceholder && !videoError && !isBuffering && !useEmbed && currentVideo?.service !== 'torrent' && (
+      {!isPlaying && !showPlaceholder && !videoError && !isBuffering && !useEmbed && (currentVideo?.service !== 'torrent' || torrentPlayerMode === 'p2p' || torrentPlayerMode === 'server') && (
         <div id="play-overlay" className="play-overlay" onClick={togglePlay}>
           <button className="large-play-btn" aria-label="Play">
             <svg viewBox="0 0 24 24" fill="currentColor">
@@ -1020,7 +1439,7 @@ export default function Player({
       )}
 
       {/* Controls Overlay */}
-      {!showPlaceholder && !useEmbed && currentVideo?.service !== 'torrent' && (
+      {!showPlaceholder && !useEmbed && (currentVideo?.service !== 'torrent' || torrentPlayerMode === 'p2p' || torrentPlayerMode === 'server') && (
         <Controls 
           show={showControls || !isPlaying}
           videoRef={videoRef}

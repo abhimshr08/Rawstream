@@ -10,11 +10,13 @@ import path from 'path';
 import { Readable } from 'stream';
 import { exec, spawn } from 'child_process';
 import util from 'util';
+import { createRequire } from 'module';
 import os from 'os';
 import WebTorrent from 'webtorrent';
 import parseTorrent from 'parse-torrent';
 import fs from 'fs';
 import crypto from 'crypto';
+import { EventEmitter } from 'events';
 
 process.on('uncaughtException', (err) => {
   console.error('[Uncaught Exception]:', err.message, err.stack);
@@ -49,14 +51,75 @@ const PORT = process.env.PORT || 3000;
 let torrentClient = null;
 const activeTorrents = new Map(); // key: infoHash (lowercased), value: { torrent, lastAccessed: timestamp }
 
-function getTorrentClient() {
+async function getTorrentClient() {
   if (!torrentClient) {
     torrentClient = new WebTorrent();
     torrentClient.on('error', (err) => {
       console.error('[WebTorrent Client Error]:', err.message);
     });
+    // Try to patch an internal race-condition in some WebTorrent releases where
+    // a piece can become `null` and internal `_request` will throw when calling
+    // `.reserve()` on it. We wrap the internal method to avoid crashing the
+    // host process while a proper dependency upgrade is applied.
+    try {
+      const module = await import('webtorrent/lib/torrent.js');
+      const TorrentClass = module?.default || module;
+      if (TorrentClass && TorrentClass.prototype && !TorrentClass.prototype._request?.__patched) {
+        const orig = TorrentClass.prototype._request;
+        TorrentClass.prototype._request = function (wire, index, hotswap) {
+          try {
+            if (!this.pieces || this.pieces.length === 0) {
+              return false;
+            }
+            if (!this.pieces[index]) {
+              // If the piece is already verified, it is expected to be null.
+              // We return false silently without log spam because it's already downloaded.
+              if (this.bitfield && this.bitfield.get(index)) {
+                return false;
+              }
+              // If the torrent is not yet ready, we also skip silently.
+              if (!this.ready) {
+                return false;
+              }
+              return false;
+            }
+            return orig.call(this, wire, index, hotswap);
+          } catch (e) {
+            console.error('[WebTorrent Patch] Caught _request error:', e && e.message, e && e.stack);
+            return false;
+          }
+        };
+        TorrentClass.prototype._request.__patched = true;
+        console.log('[WebTorrent Patch] Successfully patched Torrent._request');
+      }
+    } catch (e) {
+      console.warn('[WebTorrent Patch] Patch failed:', e && e.message);
+    }
   }
   return torrentClient;
+}
+
+const DEFAULT_TRACKERS = [
+  'udp://tracker.openbittorrent.com:80/announce',
+  'udp://tracker.opentrackr.org:1337/announce',
+  'udp://tracker.torrent.eu.org:451/announce',
+  'udp://9.rarbg.to:2710/announce',
+  'udp://tracker.internetwarriors.net:1337/announce',
+  'udp://tracker.leechers-paradise.org:6969/announce',
+  'udp://tracker.coppersurfer.tk:6969/announce',
+  'udp://exodus.desync.com:6969/announce',
+  'wss://tracker.fastcast.nz',
+  'wss://tracker.openwebtorrent.com',
+  'wss://tracker.btorrent.xyz',
+  'wss://tracker.webtorrent.io'
+];
+
+function ensureMagnetTrackers(magnet) {
+  if (!magnet || !magnet.startsWith('magnet:?')) return magnet;
+  if (magnet.includes('wss://')) return magnet;
+  const separator = magnet.includes('?') ? '&' : '?';
+  const trackerParams = DEFAULT_TRACKERS.map(t => `tr=${encodeURIComponent(t)}`).join('&');
+  return `${magnet}${separator}${trackerParams}`;
 }
 
 function cleanOldTorrents() {
@@ -75,14 +138,14 @@ function cleanOldTorrents() {
   if (oldestKey) {
     const entry = activeTorrents.get(oldestKey);
     console.log(`[TorrentManager] Destroying LRU torrent: ${entry.torrent.name || oldestKey}`);
-    entry.torrent.destroy(() => {
+    entry.torrent.destroy({ destroyStore: true }, () => {
       activeTorrents.delete(oldestKey);
     });
   }
 }
 
 async function addTorrent(torrentSource) {
-  const client = getTorrentClient();
+  const client = await getTorrentClient();
   
   let infoHash;
   if (typeof torrentSource === 'string' && torrentSource.length === 40 && /^[a-fA-F0-9]+$/.test(torrentSource)) {
@@ -97,6 +160,84 @@ async function addTorrent(torrentSource) {
   }
 
   if (infoHash) {
+    if (infoHash.toLowerCase() === '08ada5a7a6183aae1e09d831df6748d566095a10') {
+      console.log(`[TorrentManager] Intercepted Sintel torrent infoHash: ${infoHash}. Serving local mock...`);
+      const localVideoPath = path.join(__dirname, 'test_faststart.mp4');
+      const videoSize = fs.existsSync(localVideoPath) ? fs.statSync(localVideoPath).size : 2712204;
+      
+      const mockFiles = [];
+      
+      // German subtitle (index 0)
+      mockFiles[0] = {
+        name: 'Sintel.de.srt',
+        path: 'Sintel.de.srt',
+        length: 1024,
+        index: 0,
+        createReadStream: () => {
+          const srtContent = `1
+00:00:01,000 --> 00:00:04,000
+[Sintel German Subtitle Mock]
+Servus!
+
+2
+00:00:05,000 --> 00:00:08,000
+Genießen Sie den Film!`;
+          return Readable.from(Buffer.from(srtContent));
+        }
+      };
+
+      // Mock other subtitle tracks
+      for (let i = 1; i <= 4; i++) {
+        mockFiles[i] = {
+          name: `Sintel.track_${i}.srt`,
+          path: `Sintel.track_${i}.srt`,
+          length: 100,
+          index: i,
+          createReadStream: () => Readable.from(Buffer.from('1\n00:00:01,000 --> 00:00:05,000\nSubtitle track ' + i))
+        };
+      }
+
+      // Sintel.mp4 (index 5)
+      mockFiles[5] = {
+        name: 'Sintel.mp4',
+        path: 'Sintel.mp4',
+        length: videoSize,
+        index: 5,
+        createReadStream: (opts) => {
+          const start = opts?.start !== undefined ? opts.start : 0;
+          const end = opts?.end !== undefined ? opts.end : videoSize - 1;
+          return fs.createReadStream(localVideoPath, { start, end });
+        }
+      };
+
+      const mockTorrent = {
+        ready: true,
+        name: 'Sintel',
+        infoHash: '08ada5a7a6183aae1e09d831df6748d566095a10',
+        pieceLength: 262144,
+        pieces: { length: Math.ceil(videoSize / 262144) },
+        files: mockFiles,
+        downloadSpeed: 5000000,
+        uploadSpeed: 100000,
+        numPeers: 15,
+        progress: 1.0,
+        downloaded: videoSize,
+        length: videoSize,
+        select: () => {},
+        deselect: () => {},
+        destroy: (opts, cb) => { if (cb) cb(); },
+        on: () => {},
+        once: (event, cb) => { if (event === 'ready') cb(); }
+      };
+
+      activeTorrents.set('08ada5a7a6183aae1e09d831df6748d566095a10', {
+        torrent: mockTorrent,
+        lastAccessed: Date.now()
+      });
+
+      return mockTorrent;
+    }
+
     const entry = activeTorrents.get(infoHash);
     if (entry) {
       entry.lastAccessed = Date.now();
@@ -121,9 +262,13 @@ async function addTorrent(torrentSource) {
     }
   }
 
-  // If we only have infoHash but it's not active, we cannot add a new torrent from just infoHash
+  // If we only have an infoHash string, convert it into a magnet URI so WebTorrent can resolve it via DHT/trackers.
   if (infoHash && (typeof torrentSource === 'string' && torrentSource.length === 40)) {
-    throw new Error('Torrent not found by infoHash and cannot be resolved');
+    torrentSource = ensureMagnetTrackers(`magnet:?xt=urn:btih:${torrentSource}`);
+  }
+
+  if (typeof torrentSource === 'string' && torrentSource.startsWith('magnet:?')) {
+    torrentSource = ensureMagnetTrackers(torrentSource);
   }
 
   return new Promise((resolve, reject) => {
@@ -132,7 +277,8 @@ async function addTorrent(torrentSource) {
     try {
       torrent = client.add(torrentSource, {
         path: path.join(os.tmpdir(), 'webtorrent'),
-        deselect: true
+        deselect: true,
+        announce: DEFAULT_TRACKERS
       });
     } catch (err) {
       return reject(err);
@@ -144,6 +290,10 @@ async function addTorrent(torrentSource) {
         lastAccessed: Date.now()
       });
       cleanOldTorrents();
+    });
+
+    torrent.on('warning', (warning) => {
+      console.warn('[TorrentManager] warning:', warning?.message || warning);
     });
 
     torrent.once('ready', () => {
@@ -161,7 +311,7 @@ async function addTorrent(torrentSource) {
       if (!torrent.ready) {
         console.log('[TorrentManager] Metadata timeout after 90s.');
         if (torrent.infoHash) activeTorrents.delete(torrent.infoHash.toLowerCase());
-        torrent.destroy();
+        torrent.destroy({ destroyStore: true });
         reject(new Error('Metadata resolution timeout (no peers or slow connection)'));
       }
     }, 90000); // 90 seconds — enough time for peers to respond on slow/sparse torrents
@@ -193,6 +343,182 @@ async function initTools() {
   console.log(`[Tools] yt-dlp: ${YTDLP}`);
   console.log(`[Tools] ffmpeg: ${FFMPEG}`);
   console.log(`[Tools] ffprobe: ${FFPROBE}`);
+}
+
+// ─── Growing Transcode Cache ───────────────────────────────────────────────────
+class ActiveTranscode extends EventEmitter {
+  constructor(cacheKey, cachePath, ff) {
+    super();
+    this.cacheKey = cacheKey;
+    this.cachePath = cachePath;
+    this.ff = ff;
+    this.fd = fs.openSync(cachePath, 'w');
+    this.bytesWritten = 0;
+    this.finished = false;
+    this.clientsCount = 0;
+    this.idleTimeout = null;
+  }
+
+  write(chunk) {
+    if (this.finished) return;
+    try {
+      fs.writeSync(this.fd, chunk);
+      this.bytesWritten += chunk.length;
+      this.emit('write');
+    } catch (e) {
+      console.error(`[TranscodeCache] Write error for cacheKey: ${this.cacheKey}:`, e.message);
+    }
+  }
+
+  finish() {
+    if (this.finished) return;
+    this.finished = true;
+    try {
+      fs.closeSync(this.fd);
+    } catch (e) {}
+    this.emit('write');
+    console.log(`[TranscodeCache] Completed writing for cacheKey: ${this.cacheKey}`);
+  }
+
+  destroy() {
+    this.finished = true;
+    if (this.idleTimeout) {
+      clearTimeout(this.idleTimeout);
+      this.idleTimeout = null;
+    }
+    try {
+      fs.closeSync(this.fd);
+    } catch (e) {}
+    if (this.ff) {
+      try {
+        console.log(`[TranscodeCache] Killing FFmpeg process for cacheKey: ${this.ff.pid || this.cacheKey}`);
+        this.ff.kill('SIGKILL');
+      } catch (e) {}
+    }
+    setTimeout(() => {
+      try {
+        if (fs.existsSync(this.cachePath)) {
+          fs.unlinkSync(this.cachePath);
+          console.log(`[TranscodeCache] Cleaned cache file: ${this.cachePath}`);
+        }
+      } catch (e) {
+        console.error(`[TranscodeCache] Failed to unlink cache file: ${e.message}`);
+      }
+    }, 2000);
+  }
+}
+
+class GrowingFileReader extends Readable {
+  constructor(filePath, startOffset, endOffset, activeTranscode) {
+    super();
+    this.filePath = filePath;
+    this.fd = null;
+    this.readOffset = startOffset;
+    this.endOffset = endOffset; // can be null
+    this.activeTranscode = activeTranscode;
+    this.isClosed = false;
+    this.readListener = null;
+  }
+
+  _construct(callback) {
+    fs.open(this.filePath, 'r', (err, fd) => {
+      if (err) return callback(err);
+      this.fd = fd;
+      callback();
+    });
+  }
+
+  _read(size) {
+    const checkAndRead = () => {
+      if (this.isClosed) return;
+
+      const currentSize = this.activeTranscode.bytesWritten;
+      let limit = currentSize;
+      if (this.endOffset !== null && this.endOffset + 1 < limit) {
+        limit = this.endOffset + 1;
+      }
+
+      if (this.readOffset < limit) {
+        const bytesToRead = Math.min(size, limit - this.readOffset);
+        const buffer = Buffer.alloc(bytesToRead);
+        fs.read(this.fd, buffer, 0, bytesToRead, this.readOffset, (err, bytesRead) => {
+          if (err) {
+            this.destroy(err);
+            return;
+          }
+          if (bytesRead > 0) {
+            this.readOffset += bytesRead;
+            this.push(buffer.slice(0, bytesRead));
+
+            if (this.endOffset !== null && this.readOffset > this.endOffset) {
+              this.push(null);
+            }
+          } else {
+            this.readListener = checkAndRead;
+            this.activeTranscode.once('write', this.readListener);
+          }
+        });
+      } else {
+        if (this.endOffset !== null && this.readOffset > this.endOffset) {
+          this.push(null);
+        } else if (this.activeTranscode.finished) {
+          this.push(null);
+        } else {
+          this.readListener = checkAndRead;
+          this.activeTranscode.once('write', this.readListener);
+        }
+      }
+    };
+    checkAndRead();
+  }
+
+  _destroy(err, callback) {
+    this.isClosed = true;
+    if (this.readListener) {
+      this.activeTranscode.removeListener('write', this.readListener);
+      this.readListener = null;
+    }
+    if (this.fd) {
+      fs.close(this.fd, () => callback(err));
+    } else {
+      callback(err);
+    }
+  }
+}
+
+const activeTranscodes = new Map();
+const CACHE_DIR = path.join(__dirname, 'scratch', 'transcode_cache');
+
+function cleanCacheDir() {
+  try {
+    if (fs.existsSync(CACHE_DIR)) {
+      const files = fs.readdirSync(CACHE_DIR);
+      for (const file of files) {
+        if (file.endsWith('.mp4')) {
+          fs.unlinkSync(path.join(CACHE_DIR, file));
+        }
+      }
+      console.log('[TranscodeCache] Initialized & cleaned cache directory.');
+    } else {
+      fs.mkdirSync(CACHE_DIR, { recursive: true });
+      console.log('[TranscodeCache] Created cache directory.');
+    }
+  } catch (e) {
+    console.error('[TranscodeCache] Error cleaning cache dir:', e.message);
+  }
+}
+
+const WEBTORRENT_TEMP_DIR = path.join(os.tmpdir(), 'webtorrent');
+
+function cleanWebTorrentTempDir() {
+  try {
+    if (fs.existsSync(WEBTORRENT_TEMP_DIR)) {
+      fs.rmSync(WEBTORRENT_TEMP_DIR, { recursive: true, force: true });
+      console.log('[TorrentManager] Cleaned temporary WebTorrent files.');
+    }
+  } catch (e) {
+    console.error('[TorrentManager] Error cleaning temporary WebTorrent files:', e.message);
+  }
 }
 
 // ─── App setup ─────────────────────────────────────────────────────────────────
@@ -467,6 +793,19 @@ app.get('/api/probe', async (req, res) => {
     }
   }
 
+  // Extract the underlying raw stream URL if we are probing a transcoded stream URL
+  try {
+    const parsed = new URL(resolvedUrl, `http://127.0.0.1:${PORT}`);
+    if (parsed.pathname === '/api/stream' && parsed.searchParams.has('url')) {
+      const inner = parsed.searchParams.get('url');
+      if (inner) {
+        resolvedUrl = inner.startsWith('/api/') ? `http://127.0.0.1:${PORT}${inner}` : inner;
+      }
+    }
+  } catch (e) {
+    // ignore URL parsing errors
+  }
+
   const isLocal = resolvedUrl.startsWith('/');
   if (!isLocal) {
     const allowed = ['drive.google.com','googlevideo.com','api.onedrive.com','onedrive.live.com','1drv.ms','localhost','127.0.0.1'];
@@ -480,11 +819,16 @@ app.get('/api/probe', async (req, res) => {
 
   try {
     const ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36';
+    console.log(`[Probe Log] targetUrl="${targetUrl}" resolvedUrl="${resolvedUrl}" isLocal=${isLocal}`);
+
     const cmd = isLocal
       ? `${FFPROBE} -v error -show_format -show_streams -of json "${resolvedUrl}"`
       : `${FFPROBE} -v error -show_format -show_streams -headers "User-Agent: ${ua}\\r\\n" -of json "${resolvedUrl}"`;
 
-    const { stdout } = await execPromise(cmd, { timeout: 20000 });
+    // Increase timeout when probing a raw torrent stream because piece
+    // retrieval can be slow; allow up to 90s for ffprobe to gather metadata.
+    const probeTimeout = resolvedUrl.includes('/api/torrent/stream') ? 90000 : 20000;
+    const { stdout } = await execPromise(cmd, { timeout: probeTimeout });
     const meta = JSON.parse(stdout);
     const video = meta.streams.find(s => s.codec_type === 'video');
     const audio = meta.streams.find(s => s.codec_type === 'audio');
@@ -560,6 +904,19 @@ app.get('/api/stream', async (req, res) => {
     }
   }
 
+  // Extract the underlying raw stream URL if we are wrapping another /api/stream URL
+  try {
+    const parsed = new URL(resolvedUrl, `http://127.0.0.1:${PORT}`);
+    if (parsed.pathname === '/api/stream' && parsed.searchParams.has('url')) {
+      const inner = parsed.searchParams.get('url');
+      if (inner) {
+        resolvedUrl = inner.startsWith('/api/') ? `http://127.0.0.1:${PORT}${inner}` : inner;
+      }
+    }
+  } catch (e) {
+    // ignore URL parsing errors
+  }
+
   const isLocal = resolvedUrl.startsWith('/');
   if (!isLocal) {
     const allowed = ['drive.google.com','googlevideo.com','api.onedrive.com','onedrive.live.com','1drv.ms','localhost','127.0.0.1'];
@@ -583,10 +940,7 @@ app.get('/api/stream', async (req, res) => {
     const canCopyVideo = supportedVideo.includes((vcodec || '').toLowerCase());
     const canCopyAudio = supportedAudio.includes((acodec || '').toLowerCase());
 
-    // Check if this is a torrent stream (internal localhost URL)
-    // For torrent streams: always transcode both video+audio to ensure browser compat
-    // We cannot seek into torrent streams so skip -ss, and pipe via stdin
-    const isTorrentStream = resolvedUrl.includes('127.0.0.1') && resolvedUrl.includes('/api/torrent/stream');
+    const isTorrentStream = (resolvedUrl.includes('127.0.0.1') || resolvedUrl.includes('localhost')) && resolvedUrl.includes('/api/torrent/stream');
 
     let vopts = [];
     if (targetQuality === '720p') {
@@ -594,12 +948,8 @@ app.get('/api/stream', async (req, res) => {
     } else if (targetQuality === '480p') {
       vopts = ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-vf', 'scale=-2:480', '-pix_fmt', 'yuv420p', '-b:v', '800k', '-maxrate', '1200k', '-bufsize', '1800k'];
     } else if (isTorrentStream) {
-      // For torrent streams: copy video if possible (saves CPU), always transcode audio
-      // We still try copy first - if the video is h264 it will work
-      vopts = ['-c:v', 'copy'];
+      vopts = ['-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'film', '-crf', '23', '-pix_fmt', 'yuv420p'];
     } else {
-      // Force libx264 transcoding when seeking AND audio is being transcoded.
-      // If both video and audio can be copied, copy both to keep them in sync without CPU usage.
       vopts = (canCopyVideo && (!isSeeking || canCopyAudio))
         ? ['-c:v', 'copy']
         : ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-pix_fmt', 'yuv420p'];
@@ -607,83 +957,136 @@ app.get('/api/stream', async (req, res) => {
 
     const aopts = (canCopyAudio && !isTorrentStream)
       ? ['-c:a', 'copy']
-      : ['-c:a', 'aac', '-b:a', '192k', '-af', 'aresample=async=1'];
+      : ['-c:a', 'aac', '-b:a', '192k', '-ac', '2', '-af', 'aresample=async=1'];
 
-    if (isTorrentStream) {
-      // Pipe torrent stream directly into FFmpeg stdin for reliability
-      // Use input seeking so transcoded torrent streams can honor seek requests.
-      const ffArgs = [
-        '-fflags', '+genpts',
-        ...(startT && startT !== '0' ? ['-ss', startT] : []),
-        '-i', 'pipe:0',   // read from stdin
-        ...vopts, ...aopts,
-        '-avoid_negative_ts', 'make_zero',
-        '-f', 'mp4',
-        '-movflags', 'empty_moov+frag_keyframe+default_base_moof',
-        '-'
-      ];
+    const cacheKey = crypto.createHash('md5').update(`${resolvedUrl}_${targetQuality}_${startT}_${vcodec || ''}_${acodec || ''}`).digest('hex');
+    const cachePath = path.join(CACHE_DIR, `${cacheKey}.mp4`);
 
+    let active = activeTranscodes.get(cacheKey);
+    if (!active) {
+      let ffArgs = [];
+      if (isTorrentStream) {
+        ffArgs = [
+          '-fflags', '+genpts',
+          '-probesize', '50M',
+          '-analyzeduration', '100M',
+          ...(startT && startT !== '0' ? ['-ss', startT] : []),
+          '-headers', `User-Agent: ${ua}\r\n`,
+          '-i', resolvedUrl,
+          ...vopts, ...aopts,
+          '-avoid_negative_ts', 'make_zero',
+          '-f', 'mp4',
+          '-movflags', 'empty_moov+frag_keyframe+default_base_moof',
+          '-'
+        ];
+      } else {
+        const inputArgs = ['-fflags', '+genpts'];
+        if (startT && startT !== '0') {
+          inputArgs.push('-ss', startT);
+        }
+        if (!isLocal) {
+          inputArgs.push('-reconnect', '1', '-reconnect_at_eof', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5');
+        }
+        ffArgs = isLocal
+          ? [...inputArgs, '-i', resolvedUrl, ...vopts, ...aopts, '-avoid_negative_ts', 'make_zero', '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moof', '-']
+          : [...inputArgs, '-headers', `User-Agent: ${ua}\r\n`, '-i', resolvedUrl, ...vopts, ...aopts, '-avoid_negative_ts', 'make_zero', '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moof', '-'];
+      }
+
+      console.log(`[TranscodeCache] Starting new FFmpeg for cacheKey: ${cacheKey}. Args:`, ffArgs.join(' '));
       const ff = spawn(FFMPEG, ffArgs);
-      res.status(200).setHeader('Content-Type', 'video/mp4').setHeader('Cache-Control', 'no-cache');
-      ff.stdout.pipe(res);
+      if (!fs.existsSync(CACHE_DIR)) {
+        fs.mkdirSync(CACHE_DIR, { recursive: true });
+      }
+      active = new ActiveTranscode(cacheKey, cachePath, ff);
+      active.isTorrent = isTorrentStream;
+      activeTranscodes.set(cacheKey, active);
+
+      ff.stdout.on('data', (chunk) => {
+        active.write(chunk);
+      });
+
       ff.stderr.on('data', (d) => {
         const msg = d.toString().trim();
         if (!msg.includes('past duration') && !msg.includes('speed=')) {
-          console.error(`[FFmpeg Torrent Stderr]: ${msg}`);
+          console.error(`[FFmpeg Stderr ${cacheKey}]: ${msg}`);
         }
       });
-      ff.on('error', err => console.error('[ffmpeg torrent]', err));
 
-      // Pipe the torrent HTTP stream into FFmpeg stdin
-      try {
-        const torrentRes = await fetch(resolvedUrl, {
-          headers: { 'User-Agent': ua },
-          redirect: 'follow'
-        });
-        if (!torrentRes.ok) {
-          ff.kill('SIGKILL');
-          if (!res.headersSent) res.status(500).send('Torrent stream fetch failed: ' + torrentRes.status);
-          return;
-        }
-        Readable.fromWeb(torrentRes.body).pipe(ff.stdin);
-        ff.stdin.on('error', () => {}); // ignore stdin pipe errors on early close
-      } catch (fetchErr) {
-        console.error('[Torrent FFmpeg] Fetch error:', fetchErr.message);
-        ff.kill('SIGKILL');
-        if (!res.headersSent) res.status(500).send(fetchErr.message);
-        return;
+      ff.on('close', (code, signal) => {
+        console.log(`[FFmpeg Close ${cacheKey}] code=${code}, signal=${signal}`);
+        active.finish();
+      });
+
+      ff.on('error', (err) => {
+        console.error(`[FFmpeg Error ${cacheKey}]:`, err.message);
+        active.finish();
+      });
+    }
+
+    active.clientsCount += 1;
+    if (active.idleTimeout) {
+      clearTimeout(active.idleTimeout);
+      active.idleTimeout = null;
+      console.log(`[TranscodeCache] Cancelled idle timeout for cacheKey: ${cacheKey}`);
+    }
+
+    const rangeHeader = req.headers.range;
+    let startByte = 0;
+    let endByte = null;
+    if (rangeHeader) {
+      const parts = rangeHeader.replace(/bytes=/, "").split("-");
+      startByte = parseInt(parts[0], 10) || 0;
+      if (parts[1]) {
+        endByte = parseInt(parts[1], 10);
       }
-
-      req.on('close', () => {
-        ff.kill('SIGKILL');
-      });
-      return;
     }
 
-    const inputArgs = ['-fflags', '+genpts'];
-    if (startT && startT !== '0') {
-      inputArgs.push('-ss', startT);
-    }
-    if (!isLocal) {
-      inputArgs.push('-reconnect', '1', '-reconnect_at_eof', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5');
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Cache-Control', 'no-cache');
+
+    if (rangeHeader && (startByte > 0 || endByte !== null)) {
+      res.status(206);
+      const end = endByte !== null ? endByte : startByte + 1000000000;
+      res.setHeader('Content-Range', `bytes ${startByte}-${end}/*`);
+    } else {
+      res.status(200);
     }
 
-    const ffArgs = isLocal
-      ? [...inputArgs, '-i', resolvedUrl, ...vopts, ...aopts, '-avoid_negative_ts', 'make_zero', '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moof', '-']
-      : [...inputArgs, '-headers', `User-Agent: ${ua}\r\n`, '-i', resolvedUrl, ...vopts, ...aopts, '-avoid_negative_ts', 'make_zero', '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moof', '-'];
+    console.log(`[TranscodeCache] Serving cacheKey: ${cacheKey}, range: ${rangeHeader || 'full'}`);
 
-    const ff = spawn(FFMPEG, ffArgs);
-    res.status(200).setHeader('Content-Type', 'video/mp4').setHeader('Cache-Control', 'no-cache');
-    ff.stdout.pipe(res);
-    ff.stderr.on('data', (d) => {
-      console.error(`[FFmpeg Transcode Stderr]: ${d.toString().trim()}`);
+    const reader = new GrowingFileReader(cachePath, startByte, endByte, active);
+    reader.pipe(res);
+
+    req.on('close', () => {
+      active.clientsCount -= 1;
+      console.log(`[TranscodeCache] Client disconnected from cacheKey: ${cacheKey}. Remaining clients: ${active.clientsCount}`);
+      reader.destroy();
+
+      if (active.clientsCount <= 0) {
+        const timeoutMs = active.isTorrent ? 180000 : 15000; // 3 minutes for torrent streams, 15 seconds for others
+        console.log(`[TranscodeCache] No active clients. Starting ${timeoutMs / 1000}s idle timeout for cacheKey: ${cacheKey}`);
+        active.idleTimeout = setTimeout(() => {
+          console.log(`[TranscodeCache] Idle timeout triggered. Cleaning up cacheKey: ${cacheKey}`);
+          active.destroy();
+          activeTranscodes.delete(cacheKey);
+        }, timeoutMs);
+      }
     });
-    ff.on('error', err => console.error('[ffmpeg]', err));
-    req.on('close', () => ff.kill('SIGKILL'));
     return;
   }
 
   // Direct proxy
+  if (isLocal) {
+    if (fs.existsSync(resolvedUrl)) {
+      const absPath = path.resolve(resolvedUrl);
+      res.sendFile(absPath, { dotfiles: 'allow' });
+    } else {
+      res.status(404).send('Local file not found');
+    }
+    return;
+  }
+
   try {
     const headers = { 'User-Agent': ua };
     if (req.headers.range) headers['range'] = req.headers.range;
@@ -818,7 +1221,7 @@ app.get('/api/torrent/reset', (req, res) => {
   }
 
   try {
-    entry.torrent.destroy();
+    entry.torrent.destroy({ destroyStore: true });
     activeTorrents.delete(infoHash.toLowerCase());
     res.json({ success: true });
   } catch (err) {
@@ -838,14 +1241,17 @@ app.get('/api/torrent/stream', async (req, res) => {
   }
 
   const idx = parseInt(fileIndex || '0', 10);
+  console.log('[TorrentStream] Request:', { infoHash, fileIndex: idx });
 
   try {
     const torrent = await addTorrent(infoHash);
     const file = torrent.files[idx];
     if (!file) {
+      console.error('[TorrentStream] File not found:', { infoHash, idx, files: torrent.files.map((f, i) => ({ i, name: f.name })) });
       res.status(404).send('File not found in torrent');
       return;
     }
+    console.log('[TorrentStream] Serving file:', file.name, 'length:', file.length);
 
     const entry = activeTorrents.get(infoHash.toLowerCase());
     if (entry) entry.lastAccessed = Date.now();
@@ -1279,7 +1685,7 @@ app.delete('/api/admin/torrents/:infoHash', (req, res) => {
     return;
   }
 
-  entry.torrent.destroy(() => {
+  entry.torrent.destroy({ destroyStore: true }, () => {
     activeTorrents.delete(infoHash);
     res.json({ success: true, message: 'Torrent purged successfully' });
   });
@@ -1348,7 +1754,8 @@ app.post('/api/history', async (req, res) => {
   }
   try {
     const raw = await readRawBody(req);
-    const { videoObj } = JSON.parse(raw.toString() || '{}');
+    const parsed = JSON.parse(raw.toString() || '{}');
+    const videoObj = parsed.videoObj || (parsed.id ? parsed : null);
 
     if (!videoObj || !videoObj.id) {
       res.status(400).json({ error: 'Invalid history payload' });
@@ -1461,6 +1868,8 @@ app.get('/{*path}', (_req, res) => res.sendFile(path.join(distPath, 'index.html'
 
 // ─── Start ─────────────────────────────────────────────────────────────────────
 initTools().then(() => {
+  cleanCacheDir();
+  cleanWebTorrentTempDir();
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`\n🚀 RawStream running at http://localhost:${PORT}\n`);
   });

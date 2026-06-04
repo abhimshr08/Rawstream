@@ -58,6 +58,19 @@ export default function Controls({
   const [subtitleTracks, setSubtitleTracks] = useState([]);
   const [activeSubtitle, setActiveSubtitle] = useState('off');
   const [subtitlesUrl, setSubtitlesUrl] = useState('');
+  const [uploadedSubtitles, setUploadedSubtitles] = useState([]); // Array of { label, content }
+  const blobUrlsRef = useRef([]);
+
+  // Cleanup all blob URLs on unmount
+  useEffect(() => {
+    return () => {
+      blobUrlsRef.current.forEach(url => {
+        try {
+          URL.revokeObjectURL(url);
+        } catch (e) {}
+      });
+    };
+  }, []);
 
   // Timeline Progress Scrubber
   const handleProgressInput = (e) => {
@@ -88,7 +101,7 @@ export default function Controls({
   };
 
   const handleProgressHover = (e) => {
-    const duration = needsTranscode ? mediaDuration : videoRef.current?.duration;
+    const duration = mediaDuration > 0 ? mediaDuration : videoRef.current?.duration;
     if (isNaN(duration) || duration <= 0) return;
 
     const rect = e.target.getBoundingClientRect();
@@ -108,8 +121,9 @@ export default function Controls({
     const handleTimeUpdate = () => {
       if (isDraggingProgressRef.current) return;
 
+      const useTranscode = needsTranscode || (selectedQuality && selectedQuality !== 'original') || transcodeStartTime > 0 || (video.src && video.src.includes('transcode=true'));
       let displayTime = video.currentTime;
-      if (needsTranscode) {
+      if (useTranscode) {
         displayTime = transcodeStartTime + video.currentTime;
       }
 
@@ -126,7 +140,28 @@ export default function Controls({
 
     video.addEventListener('timeupdate', handleTimeUpdate);
     return () => video.removeEventListener('timeupdate', handleTimeUpdate);
-  }, [currentVideo, mediaDuration, needsTranscode, transcodeStartTime]);
+  }, [currentVideo, mediaDuration, needsTranscode, transcodeStartTime, selectedQuality]);
+
+  // Sync volume state with native video element (e.g. keyboard shortcuts via Player.jsx)
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const syncVolumeState = () => {
+      // Sync muted state
+      const muted = video.muted || video.volume === 0;
+      setIsMuted(muted);
+      if (!muted) {
+        setVolume(video.volume);
+        volumeMemoryRef.current = video.volume;
+      } else {
+        setVolume(video.muted ? volumeMemoryRef.current : 0);
+      }
+    };
+
+    video.addEventListener('volumechange', syncVolumeState);
+    return () => video.removeEventListener('volumechange', syncVolumeState);
+  }, [currentVideo]);
 
   // Volume Handlers
   const handleVolumeChange = (e) => {
@@ -191,29 +226,15 @@ export default function Controls({
 
     addToast(`Changing resolution to: ${quality}`, 'info');
 
-    // Reload src with quality
-    let newSrc = '';
-    const rawUrl = currentVideo.rawStreamUrl || currentVideo.streamUrl;
-    if (quality === 'original') {
-      if (currentVideo.service === 'google') {
-        newSrc = `/api/gdrive-stream?fileId=${encodeURIComponent(currentVideo.id)}`;
-      } else if (needsTranscode) {
-        newSrc = `/api/stream?url=${encodeURIComponent(rawUrl)}&transcode=true&vcodec=${encodeURIComponent(vcodec)}&acodec=${encodeURIComponent(acodec)}`;
-      } else {
-        newSrc = `/api/stream?url=${encodeURIComponent(rawUrl)}`;
-      }
-    } else {
-      newSrc = `/api/stream?url=${encodeURIComponent(rawUrl)}&quality=${quality}&transcode=true&vcodec=${encodeURIComponent(vcodec)}&acodec=${encodeURIComponent(acodec)}`;
-    }
-
     const video = videoRef.current;
     if (video) {
-      video.src = newSrc;
-      video.load();
       if (currentVideo.service === 'google' && quality === 'original') {
+        const streamUrl = `https://docs.google.com/uc?export=download&id=${currentVideo.id}`;
+        video.src = streamUrl;
+        video.load();
         seekGDriveStream(currentPos);
       } else {
-        seekTranscodedStream(currentPos);
+        seekTranscodedStream(currentPos, quality);
       }
     }
   };
@@ -225,45 +246,106 @@ export default function Controls({
     return vtt;
   };
 
-  const addSubtitleTrack = (src, label) => {
+  const shiftVttTimestamps = (vttText, shiftSeconds) => {
+    if (!shiftSeconds || shiftSeconds === 0) return vttText;
+
+    const parseTimeToSeconds = (timeStr) => {
+      const parts = timeStr.replace(',', '.').split(':');
+      let hrs = 0, mins = 0, secs = 0;
+      if (parts.length === 3) {
+        hrs = parseFloat(parts[0]);
+        mins = parseFloat(parts[1]);
+        secs = parseFloat(parts[2]);
+      } else if (parts.length === 2) {
+        mins = parseFloat(parts[0]);
+        secs = parseFloat(parts[1]);
+      } else {
+        secs = parseFloat(parts[0]) || 0;
+      }
+      return hrs * 3600 + mins * 60 + secs;
+    };
+
+    const formatSecondsToTime = (totalSeconds) => {
+      if (totalSeconds < 0) totalSeconds = 0;
+      const hrs = Math.floor(totalSeconds / 3600);
+      const mins = Math.floor((totalSeconds % 3600) / 60);
+      const secs = Math.floor(totalSeconds % 60);
+      const ms = Math.floor((totalSeconds % 1) * 1000);
+      const pad = (n, width = 2) => String(n).padStart(width, '0');
+      return `${pad(hrs)}:${pad(mins)}:${pad(secs)}.${pad(ms, 3)}`;
+    };
+
+    const timestampRegex = /((\d{2}:)?\d{2}:\d{2}[.,]\d{3})\s*-->\s*((\d{2}:)?\d{2}:\d{2}[.,]\d{3})/g;
+
+    return vttText.replace(timestampRegex, (match, startStr, p2, endStr) => {
+      const startSecs = parseTimeToSeconds(startStr);
+      const endSecs = parseTimeToSeconds(endStr);
+      
+      const newStart = Math.max(0, startSecs - shiftSeconds);
+      const newEnd = Math.max(0, endSecs - shiftSeconds);
+      
+      return `${formatSecondsToTime(newStart)} --> ${formatSecondsToTime(newEnd)}`;
+    });
+  };
+
+  // Re-synchronize and shift subtitle cue times dynamically whenever transcodeStartTime,
+  // uploadedSubtitles, or activeSubtitle changes.
+  useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
 
-    // Check if label already exists
-    const existing = video.querySelectorAll('track');
-    existing.forEach(t => {
-      if (t.label === label) t.remove();
+    // Clean up existing custom uploaded track elements
+    const existingTracks = video.querySelectorAll('track[data-custom="true"]');
+    existingTracks.forEach(t => t.remove());
+
+    // Re-create each custom subtitle track with shifted timestamps
+    uploadedSubtitles.forEach(sub => {
+      const shiftedContent = shiftVttTimestamps(sub.content, transcodeStartTime);
+      const blob = new Blob([shiftedContent], { type: 'text/vtt' });
+      const blobUrl = URL.createObjectURL(blob);
+      blobUrlsRef.current.push(blobUrl);
+
+      const track = document.createElement('track');
+      track.kind = 'subtitles';
+      track.label = sub.label;
+      track.srclang = 'en';
+      track.src = blobUrl;
+      track.setAttribute('data-custom', 'true');
+      if (sub.label === activeSubtitle) {
+        track.default = true;
+      }
+
+      video.appendChild(track);
     });
 
-    const track = document.createElement('track');
-    track.kind = 'subtitles';
-    track.label = label;
-    track.srclang = 'en';
-    track.src = src;
-    track.default = true;
-
-    video.appendChild(track);
-
-    // Turn off all other tracks, turn on this one
-    setTimeout(() => {
+    // Sync showing state of tracks
+    const syncTimeout = setTimeout(() => {
       const tracks = video.textTracks;
       for (let i = 0; i < tracks.length; i++) {
-        if (tracks[i].label === label) {
+        if (tracks[i].label === activeSubtitle) {
           tracks[i].mode = 'showing';
-        } else {
+        } else if (activeSubtitle === 'off') {
           tracks[i].mode = 'disabled';
+        } else {
+          // If another track was showing, keep it disabled
+          if (tracks[i].label !== 'off') {
+            tracks[i].mode = 'disabled';
+          }
         }
       }
-      
-      // Update local state list
+
+      // Refresh UI tracks list
       const loaded = [];
       for (let i = 0; i < tracks.length; i++) {
         loaded.push({ label: tracks[i].label, mode: tracks[i].mode });
       }
       setSubtitleTracks(loaded);
-      setActiveSubtitle(label);
     }, 100);
-  };
+
+    return () => {
+      clearTimeout(syncTimeout);
+    };
+  }, [transcodeStartTime, uploadedSubtitles, activeSubtitle]);
 
   const handleSubtitlesUpload = (e) => {
     const file = e.target.files[0];
@@ -275,48 +357,43 @@ export default function Controls({
       if (file.name.endsWith('.srt')) {
         content = convertSrtToVtt(content);
       }
-      const blob = new Blob([content], { type: 'text/vtt' });
-      const blobUrl = URL.createObjectURL(blob);
-      addSubtitleTrack(blobUrl, file.name);
+      setUploadedSubtitles(prev => [
+        ...prev.filter(x => x.label !== file.name),
+        { label: file.name, content }
+      ]);
+      setActiveSubtitle(file.name);
       addToast(`Subtitles uploaded: ${file.name}`, 'success');
     };
     reader.readAsText(file);
     setShowSubtitlesMenu(false);
   };
 
-  const handleSubtitlesUrlLoad = () => {
+  const handleSubtitlesUrlLoad = async () => {
     if (!subtitlesUrl.trim()) return;
     try {
       const parsed = new URL(subtitlesUrl);
       const label = `Remote VTT (${parsed.hostname})`;
-      addSubtitleTrack(subtitlesUrl, label);
+      addToast('Fetching remote subtitle...', 'info');
+      const response = await fetch(subtitlesUrl);
+      if (!response.ok) throw new Error('Network response was not ok');
+      let content = await response.text();
+      if (subtitlesUrl.endsWith('.srt') || (content.includes('-->') && !content.startsWith('WEBVTT'))) {
+        content = convertSrtToVtt(content);
+      }
+      setUploadedSubtitles(prev => [
+        ...prev.filter(x => x.label !== label),
+        { label, content }
+      ]);
+      setActiveSubtitle(label);
       setSubtitlesUrl('');
       setShowSubtitlesMenu(false);
       addToast('Remote subtitle loaded.', 'success');
     } catch (e) {
-      addToast('Invalid URL format.', 'error');
+      addToast('Failed to load remote subtitle: ' + e.message, 'error');
     }
   };
 
   const toggleSubtitleTrack = (label) => {
-    const video = videoRef.current;
-    if (!video) return;
-
-    const tracks = video.textTracks;
-    for (let i = 0; i < tracks.length; i++) {
-      if (label === 'off') {
-        tracks[i].mode = 'disabled';
-      } else {
-        tracks[i].mode = tracks[i].label === label ? 'showing' : 'disabled';
-      }
-    }
-
-    // Refresh state list
-    const loaded = [];
-    for (let i = 0; i < tracks.length; i++) {
-      loaded.push({ label: tracks[i].label, mode: tracks[i].mode });
-    }
-    setSubtitleTracks(loaded);
     setActiveSubtitle(label);
     setShowSubtitlesMenu(false);
     addToast(label === 'off' ? 'Subtitles turned off' : `Subtitles: ${label}`, 'info');
@@ -343,14 +420,8 @@ export default function Controls({
     return () => document.removeEventListener('click', handleDocClick);
   }, []);
 
-  // Best available total duration for the time display
-  const totalDuration = (() => {
-    const video = videoRef.current;
-    if (currentVideo?.service === 'google' || needsTranscode) {
-      return mediaDuration || (video?.duration && isFinite(video.duration) ? video.duration : 0);
-    }
-    return (video?.duration && isFinite(video.duration) ? video.duration : 0) || mediaDuration;
-  })();
+  // Best available total duration for the time display: prefer probed mediaDuration, fallback to live video.duration
+  const totalDuration = mediaDuration || (videoRef.current?.duration && isFinite(videoRef.current.duration) ? videoRef.current.duration : 0);
 
   // Gradient fill inline styling
   const maxBuffered = Math.max(progressPercent, bufferPercent || 0);
