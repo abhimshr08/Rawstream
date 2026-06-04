@@ -1109,29 +1109,34 @@ export default function Player({
           boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
           pointerEvents: 'auto'
         }}>
+          {/* Only show Server Stream button when a backend is available */}
+          {!isStaticHost && (
+            <button
+              type="button"
+              title="Stream via local/hosted server with FFmpeg transcoding"
+              onClick={() => {
+                logDebug('[Player] Switching to Server Stream Mode');
+                setTorrentPlayerMode('server');
+              }}
+              style={{
+                padding: '6px 12px',
+                fontSize: '0.75rem',
+                fontWeight: '600',
+                borderRadius: '6px',
+                border: 'none',
+                cursor: 'pointer',
+                color: torrentPlayerMode === 'server' ? 'white' : 'rgba(255,255,255,0.6)',
+                background: torrentPlayerMode === 'server' ? 'var(--accent-primary)' : 'transparent',
+                transition: 'all 0.2s',
+                outline: 'none'
+              }}
+            >
+              ⚡ Server Stream
+            </button>
+          )}
           <button
             type="button"
-            onClick={() => {
-              logDebug('[Player] Switching to Server Stream Mode');
-              setTorrentPlayerMode('server');
-            }}
-            style={{
-              padding: '6px 12px',
-              fontSize: '0.75rem',
-              fontWeight: '600',
-              borderRadius: '6px',
-              border: 'none',
-              cursor: 'pointer',
-              color: torrentPlayerMode === 'server' ? 'white' : 'rgba(255,255,255,0.6)',
-              background: torrentPlayerMode === 'server' ? 'var(--accent-primary)' : 'transparent',
-              transition: 'all 0.2s',
-              outline: 'none'
-            }}
-          >
-            ⚡ Server Stream
-          </button>
-          <button
-            type="button"
+            title="Stream peer-to-peer directly in your browser via WebTorrent"
             onClick={() => {
               logDebug('[Player] Switching to Browser P2P Mode');
               setTorrentPlayerMode('p2p');
@@ -1153,6 +1158,7 @@ export default function Player({
           </button>
         </div>
       )}
+
 
       {/* Ambient Canvas Glow */}
       <canvas ref={canvasRef} id="ambient-glow-canvas" className="ambient-glow-canvas" />
