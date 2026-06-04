@@ -100,6 +100,12 @@ async function getTorrentClient() {
 }
 
 const DEFAULT_TRACKERS = [
+  'https://tracker.nanoha.org:443/announce',
+  'https://tracker.lilithraws.cf:443/announce',
+  'https://tracker.manager.v6.navy:443/announce',
+  'https://tracker.qingwapt.org:443/announce',
+  'https://tracker.7471.top:443/announce',
+  'https://tracker.pmman.tech:443/announce',
   'udp://tracker.openbittorrent.com:80/announce',
   'udp://tracker.opentrackr.org:1337/announce',
   'udp://tracker.torrent.eu.org:451/announce',
@@ -523,6 +529,18 @@ function cleanWebTorrentTempDir() {
 
 // ─── App setup ─────────────────────────────────────────────────────────────────
 const app = express();
+
+// Global CORS Middleware to support cross-origin frontend (e.g. GitHub Pages)
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, PATCH, DELETE');
+  res.setHeader('Access-Control-Allow-Headers', 'X-Requested-With,Content-Type,Authorization');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
 
 // Helper to get Google Drive direct download URL by parsing the warning page if necessary
 async function getGDriveDirectUrl(fileId) {
