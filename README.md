@@ -1,3 +1,13 @@
+---
+title: Rawstream
+emoji: 🎥
+colorFrom: purple
+colorTo: indigo
+sdk: docker
+app_port: 3000
+pinned: false
+---
+
 # RawStream - Premium Cloud Media Player (V2 React)
 
 RawStream is a premium, glassmorphic React single-page web application that allows you to stream large videos directly from public Google Drive, Microsoft OneDrive, and BitTorrent magnet URIs/torrents.
