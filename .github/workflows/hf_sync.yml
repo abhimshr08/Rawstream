@@ -12,11 +12,25 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-          lfs: true
+          fetch-depth: 1
+          lfs: false
 
-      - name: Push to Hugging Face
+      - name: Push to Hugging Face (clean orphan)
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          git push --force https://Maverick9876:$HF_TOKEN@huggingface.co/spaces/Maverick9876/Rawstream main
+          git config user.email "actions@github.com"
+          git config user.name "GitHub Actions"
+          
+          # Create a fresh orphan branch with only current files (no binary history)
+          git checkout --orphan hf-deploy
+          git add -A
+          
+          # Remove any accidentally staged binary blobs
+          git rm --cached -r node_modules 2>/dev/null || true
+          git rm --cached -r dist 2>/dev/null || true
+          
+          git commit -m "deploy: sync to Hugging Face Spaces"
+          
+          # Force push this clean single-commit branch as main to HF
+          git push --force https://Maverick9876:$HF_TOKEN@huggingface.co/spaces/Maverick9876/Rawstream hf-deploy:main
