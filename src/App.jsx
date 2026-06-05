@@ -737,8 +737,7 @@ export default function App() {
               setPlayerLoading(false);
             }
           } else {
-            // Backend unavailable (e.g. GitHub Pages static host) — fall back to browser P2P mode.
-            // Player.jsx will detect isStaticHost and start in P2P mode automatically.
+            // Backend unavailable — fall back to browser P2P mode regardless of host type.
             logDebug('[Torrent] Backend unavailable or no info returned. Falling back to browser P2P mode.');
             const videoObj = {
               id: initialInfo.infoHash,
@@ -748,13 +747,14 @@ export default function App() {
               rawStreamUrl: magnetUri,
               service: 'torrent',
               torrentFileIndex: 0,
+              forceBrowserP2P: true,     // Signal Player.jsx to use browser WebTorrent even on non-static hosts
               timestamp: Date.now()
             };
             setCurrentVideo(videoObj);
             setPlayerLoading(false);
             setPlayerLoaderMessage('');
             addToHistory(videoObj);
-            addToast('Streaming via browser P2P (no server available)', 'info');
+            addToast('Streaming via browser P2P', 'info');
           }
         }).catch((err) => {
           logDebug(`[Torrent] Background metadata fetch failed: ${err.message}`);

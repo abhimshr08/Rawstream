@@ -39,12 +39,13 @@ export default function Player({
   const [isTheater, setIsTheater] = useState(false);
   const [useEmbed, setUseEmbed] = useState(false);
   const [webtorrentLoaded, setWebtorrentLoaded] = useState(false);
-  // Default to P2P mode on static hosts (GitHub Pages, Netlify, Vercel) where there is no backend
+  // Default to P2P mode on static hosts (GitHub Pages, Netlify, Vercel, HF Spaces) where there is no reliable backend
   const isStaticHost = typeof window !== 'undefined' && (
     window.location.hostname.endsWith('.github.io') ||
     window.location.hostname.endsWith('.netlify.app') ||
     window.location.hostname.endsWith('.vercel.app') ||
-    window.location.hostname.endsWith('.pages.dev')
+    window.location.hostname.endsWith('.pages.dev') ||
+    window.location.hostname.endsWith('.hf.space')
   );
   const [torrentPlayerMode, setTorrentPlayerMode] = useState(isStaticHost ? 'p2p' : 'server'); // 'server' or 'p2p'
 
@@ -128,6 +129,14 @@ export default function Player({
     return () => clearTimeout(fallbackTimer);
   }, [currentVideo, torrentPlayerMode, webtorrentLoaded]);
 
+  // Auto-switch to P2P mode when video has forceBrowserP2P flag (server fallback scenario)
+  useEffect(() => {
+    if (currentVideo?.forceBrowserP2P && torrentPlayerMode !== 'p2p') {
+      logDebug('[WebTorrent] currentVideo.forceBrowserP2P=true — switching to browser P2P mode.');
+      setTorrentPlayerMode('p2p');
+    }
+  }, [currentVideo]);
+
   // Initialize WebTorrent direct client-side player when mode is p2p
   useEffect(() => {
     if (currentVideo?.service !== 'torrent' || !webtorrentLoaded || torrentPlayerMode !== 'p2p') {
@@ -137,8 +146,17 @@ export default function Player({
 
     logDebug(`[WebTorrent] Initializing P2P direct stream for infoHash: ${currentVideo.id}`);
 
-    // Create a client
-    if (!webtorrentClientRef.current && window.WebTorrent) {
+    // Always destroy previous client before creating a new one to avoid stale torrent state
+    if (webtorrentClientRef.current) {
+      logDebug('[WebTorrent] Destroying stale client before starting new session...');
+      try {
+        webtorrentClientRef.current.destroy();
+      } catch (e) { /* ignore */ }
+      webtorrentClientRef.current = null;
+    }
+
+    // Create a fresh client
+    if (window.WebTorrent) {
       try {
         webtorrentClientRef.current = new window.WebTorrent();
       } catch (err) {

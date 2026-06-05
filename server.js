@@ -100,6 +100,14 @@ async function getTorrentClient() {
 }
 
 const DEFAULT_TRACKERS = [
+  // HTTP trackers (work in Docker/cloud environments where UDP is blocked)
+  'http://tracker.opentrackr.org:1337/announce',
+  'http://tracker.openbittorrent.com:80/announce',
+  'http://open.acgtracker.com:1096/announce',
+  'http://tracker.files.fm:6969/announce',
+  'https://tracker.gbitt.info/announce',
+  'https://1337.abcvg.info/announce',
+  // UDP trackers (may be blocked in some cloud envs)
   'udp://tracker.openbittorrent.com:80/announce',
   'udp://tracker.opentrackr.org:1337/announce',
   'udp://tracker.torrent.eu.org:451/announce',
@@ -108,6 +116,7 @@ const DEFAULT_TRACKERS = [
   'udp://tracker.leechers-paradise.org:6969/announce',
   'udp://tracker.coppersurfer.tk:6969/announce',
   'udp://exodus.desync.com:6969/announce',
+  // WebSocket trackers (WebTorrent compatible)
   'wss://tracker.fastcast.nz',
   'wss://tracker.openwebtorrent.com',
   'wss://tracker.btorrent.xyz',
