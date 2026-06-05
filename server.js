@@ -177,8 +177,14 @@ async function fetchTorrentFromCaches(infoHash) {
       if (res.ok) {
         const buffer = await res.arrayBuffer();
         if (buffer && buffer.byteLength > 0) {
-          console.log(`[TorrentManager] Successfully retrieved torrent buffer from cache (${buffer.byteLength} bytes)`);
-          return Buffer.from(buffer);
+          const uint8 = new Uint8Array(buffer);
+          // A valid bencoded dictionary must start with 'd' (ASCII 100)
+          if (uint8[0] === 100) {
+            console.log(`[TorrentManager] Successfully retrieved torrent buffer from cache (${buffer.byteLength} bytes)`);
+            return Buffer.from(buffer);
+          } else {
+            console.warn(`[TorrentManager] Cached torrent file from ${url} does not appear to be bencoded (starts with ${uint8[0]}). Ignoring.`);
+          }
         }
       }
     } catch (e) {
