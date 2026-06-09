@@ -76,25 +76,25 @@ async function run() {
     }
 
     // Try to enable autoplay
-    const attemptAutoplay = async () => {
+    const attemptAutoplay = async (forceMuted = true) => {
       try {
-        await page.evaluate(() => {
+        await page.evaluate((muted) => {
           const v = document.querySelector('video');
           if (v) {
-            v.muted = true;
+            if (muted) v.muted = true;
             v.play().catch(() => {});
           }
           const overlayBtn = document.querySelector('#play-overlay button.large-play-btn') || document.querySelector('#play-overlay');
           if (overlayBtn) overlayBtn.click();
-        });
+        }, forceMuted);
       } catch (e) {}
     };
     await attemptAutoplay();
 
-    console.log('Waiting for video to start playing (60s timeout for peer connections)...');
+    console.log('Waiting for video to start playing (180s timeout for peer connections)...');
     let start = Date.now();
     let playing = false;
-    while (Date.now() - start < 60000) {
+    while (Date.now() - start < 180000) {
       const state = await page.evaluate(() => {
         const v = document.querySelector('video');
         if (!v) return { exists: false };
@@ -133,10 +133,12 @@ async function run() {
       throw new Error('Video did not start playing. Check server logs.');
     }
 
-    console.log('🎉 Video is playing successfully! Capturing initial audio stats...');
+    console.log('🎉 Video is playing successfully! Unmuting for human verification and capturing stats...');
     const audioStats1 = await page.evaluate(() => {
       const v = document.querySelector('video');
       if (!v) return null;
+      v.muted = false;
+      v.volume = 1.0;
       return {
         webkitAudioDecodedByteCount: v.webkitAudioDecodedByteCount || null,
         currentTime: v.currentTime
@@ -158,9 +160,9 @@ async function run() {
     await page.waitForTimeout(2000); // give some time for seek to trigger load
 
     // Wait for playback to resume at/after 10:00 (display time)
-    start = Date.now();
+    const seekStart = Date.now();
     let seekCompleted = false;
-    while (Date.now() - start < 45000) {
+    while (Date.now() - seekStart < 45000) {
       const state = await page.evaluate(() => {
         const v = document.querySelector('video');
         const el = document.querySelector('#current-time');
@@ -173,13 +175,15 @@ async function run() {
           displayTime: el ? el.textContent : ''
         };
       });
-      console.log('Seeking state:', state);
+      const elapsed = ((Date.now() - seekStart) / 1000).toFixed(1);
+      console.log(`Seeking state after ${elapsed}s:`, state);
       if (state.exists && !state.paused && (state.displayTime.startsWith('10:') || state.displayTime.startsWith('11:'))) {
         seekCompleted = true;
+        console.log(`🎉 Seek succeeded in ${elapsed}s! Playback resumed at/after 10 minutes.`);
         break;
       }
       await page.waitForTimeout(1000);
-      await attemptAutoplay();
+      await attemptAutoplay(false);
     }
 
     if (!seekCompleted) {

@@ -57,13 +57,16 @@ async function getTorrentClient() {
     torrentClient.on('error', (err) => {
       console.error('[WebTorrent Client Error]:', err.message);
     });
-    // Try to patch an internal race-condition in some WebTorrent releases where
-    // a piece can become `null` and internal `_request` will throw when calling
-    // `.reserve()` on it. We wrap the internal method to avoid crashing the
-    // host process while a proper dependency upgrade is applied.
+    // Try to patch internal race-conditions in WebTorrent where:
+    // 1. A piece can become `null` and internal `_request` throws when calling `.reserve()` on it.
+    // 2. Internal `_updateWire` -> `trySelectWire` -> `speedRanker` reads `missing` on a `null` piece.
+    // We wrap these internal methods dynamically at runtime to avoid crashing the host process.
     try {
       const module = await import('webtorrent/lib/torrent.js');
       const TorrentClass = module?.default || module;
+      
+      const PLACEHOLDER = { missing: 0, _isPlaceholder: true };
+
       if (TorrentClass && TorrentClass.prototype && !TorrentClass.prototype._request?.__patched) {
         const orig = TorrentClass.prototype._request;
         TorrentClass.prototype._request = function (wire, index, hotswap) {
@@ -71,16 +74,8 @@ async function getTorrentClient() {
             if (!this.pieces || this.pieces.length === 0) {
               return false;
             }
-            if (!this.pieces[index]) {
-              // If the piece is already verified, it is expected to be null.
-              // We return false silently without log spam because it's already downloaded.
-              if (this.bitfield && this.bitfield.get(index)) {
-                return false;
-              }
-              // If the torrent is not yet ready, we also skip silently.
-              if (!this.ready) {
-                return false;
-              }
+            const piece = this.pieces[index];
+            if (!piece || piece._isPlaceholder) {
               return false;
             }
             return orig.call(this, wire, index, hotswap);
@@ -91,6 +86,30 @@ async function getTorrentClient() {
         };
         TorrentClass.prototype._request.__patched = true;
         console.log('[WebTorrent Patch] Successfully patched Torrent._request');
+      }
+
+      if (TorrentClass && TorrentClass.prototype && !TorrentClass.prototype._updateWire?.__patched) {
+        const origUpdateWire = TorrentClass.prototype._updateWire;
+        TorrentClass.prototype._updateWire = function (wire) {
+          if (!this.pieces || this.pieces.length === 0) {
+            return origUpdateWire.call(this, wire);
+          }
+          const hasNulls = this.pieces.some(p => p === null);
+          if (hasNulls) {
+            const tempPieces = this.pieces.map(p => p === null ? PLACEHOLDER : p);
+            const realPieces = this.pieces;
+            this.pieces = tempPieces;
+            try {
+              return origUpdateWire.call(this, wire);
+            } finally {
+              this.pieces = realPieces;
+            }
+          } else {
+            return origUpdateWire.call(this, wire);
+          }
+        };
+        TorrentClass.prototype._updateWire.__patched = true;
+        console.log('[WebTorrent Patch] Successfully patched Torrent._updateWire');
       }
     } catch (e) {
       console.warn('[WebTorrent Patch] Patch failed:', e && e.message);
