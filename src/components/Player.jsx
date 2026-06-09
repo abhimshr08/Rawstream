@@ -665,6 +665,8 @@ export default function Player({
   const lastAcodecRef = useRef(acodec);
   const lastUseEmbedRef = useRef(false);
   const initialRetryCountRef = useRef(0); // limit initial-load retries
+  const resumePromptedKeyRef = useRef(null);
+  const sourceLoadStartedAtRef = useRef(0);
   const MAX_TORRENT_RECOVERY_ATTEMPTS = 2;
   const torrentWatchdogRef = useRef(null);
 
@@ -963,19 +965,24 @@ export default function Player({
 
   // Resume playback check
   const checkForResumeProgress = (id) => {
+    const resumeKey = `${id}:${currentVideo?.torrentFileIndex ?? ''}:${currentVideo?.streamUrl ?? ''}`;
+    if (resumePromptedKeyRef.current === resumeKey) return;
+
+    const directTime = Number(currentVideo?.currentTime || 0);
+    const directDuration = Number(currentVideo?.duration || 0);
     const item = historyList.find(x => x.id === id);
-    if (item && item.currentTime && item.duration) {
-      const time = item.currentTime;
-      const duration = item.duration;
-      if (time > 5 && time < duration * 0.95) {
-        setResumeTime(time);
-        setShowResumePrompt(true);
-        if (resumeTimeoutRef.current) clearTimeout(resumeTimeoutRef.current);
-        resumeTimeoutRef.current = setTimeout(() => {
-          setShowResumePrompt(false);
-          setResumeTime(0);
-        }, 10000);
-      }
+    const time = directTime > 0 ? directTime : Number(item?.currentTime || 0);
+    const duration = directDuration > 0 ? directDuration : Number(item?.duration || 0);
+
+    if (time > 5 && duration > 0 && time < duration * 0.95) {
+      resumePromptedKeyRef.current = resumeKey;
+      setResumeTime(time);
+      setShowResumePrompt(true);
+      if (resumeTimeoutRef.current) clearTimeout(resumeTimeoutRef.current);
+      resumeTimeoutRef.current = setTimeout(() => {
+        setShowResumePrompt(false);
+        setResumeTime(0);
+      }, 10000);
     }
   };
 
@@ -1019,6 +1026,15 @@ export default function Player({
       console.error('Failed to sync progress:', e);
     }
   };
+
+  useEffect(() => {
+    if (!currentVideo || !sourceLoadStartedAtRef.current) return;
+    if (Date.now() - sourceLoadStartedAtRef.current > 8000) return;
+
+    const video = videoRef.current;
+    if (video && video.currentTime > 3) return;
+    checkForResumeProgress(currentVideo.id);
+  }, [historyList, currentVideo?.id, currentVideo?.streamUrl, currentVideo?.currentTime, currentVideo?.duration]);
 
   // Ambient cinema glow drawing
   const updateAmbientGlow = () => {
@@ -1103,6 +1119,7 @@ export default function Player({
   };
 
   const handlePause = () => {
+    void syncPlaybackProgress();
     setIsPlaying(false);
     if (syncIntervalRef.current) {
       clearInterval(syncIntervalRef.current);
@@ -1314,6 +1331,10 @@ export default function Player({
       logDebug(`[Player useEffect] Video changed. Resetting useEmbed and useWebtorEmbed to false.`);
       setUseEmbed(false);
       setUseWebtorEmbed(false);
+      resumePromptedKeyRef.current = null;
+    }
+    if (!isSameVideo || streamUrlChanged) {
+      sourceLoadStartedAtRef.current = Date.now();
     }
 
     lastVideoIdRef.current = currentVideo.id;
@@ -1466,6 +1487,7 @@ export default function Player({
     }
 
     return () => {
+      void syncPlaybackProgress();
       video.removeAttribute('src');
       video.load();
       clearTorrentWatchdog();

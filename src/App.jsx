@@ -31,6 +31,7 @@ export default function App() {
     token: localStorage.getItem('rawstream_session_token') || null,
     isAdmin: localStorage.getItem('rawstream_session_is_admin') === 'true'
   });
+  const sessionRef = useRef(session);
   const [showAuth, setShowAuth] = useState(!session.token);
 
   // Google OAuth (for quota-exceeded Drive files)
@@ -83,6 +84,9 @@ export default function App() {
   // References
   const debugLogsEndRef = useRef(null);
 
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
 
   // Helpers
   const addToast = (message, type = 'info') => {
@@ -102,6 +106,19 @@ export default function App() {
     console.log(`[Debug] ${msg}`);
   };
 
+  const clearUserScopedState = () => {
+    clearTorrentPolling();
+    setHistoryList([]);
+    setCurrentVideo(null);
+    setTorrentStats(null);
+    setActiveTorrentInfo(null);
+    setStreamUrlInput('');
+    setDetectedService('unknown');
+    setSelectedQuality('original');
+    setShowAdmin(false);
+    setShowDebug(false);
+  };
+
   useEffect(() => {
     if (debugLogsEndRef.current) {
       debugLogsEndRef.current.scrollTop = debugLogsEndRef.current.scrollHeight;
@@ -110,7 +127,10 @@ export default function App() {
 
   // Auth Functions
   const handleSetSession = (username, token, isAdmin) => {
-    setSession({ username, token, isAdmin });
+    const nextSession = { username, token, isAdmin };
+    sessionRef.current = nextSession;
+    clearUserScopedState();
+    setSession(nextSession);
     localStorage.setItem('rawstream_session_username', username);
     localStorage.setItem('rawstream_session_token', token);
     localStorage.setItem('rawstream_session_is_admin', isAdmin ? 'true' : 'false');
@@ -122,16 +142,13 @@ export default function App() {
     if (session.token) {
       authenticatedFetch('/api/auth/logout', { method: 'POST' }).catch(err => console.error('Logout error:', err));
     }
+    sessionRef.current = { username: null, token: null, isAdmin: false };
+    clearUserScopedState();
     setSession({ username: null, token: null, isAdmin: false });
     localStorage.removeItem('rawstream_session_username');
     localStorage.removeItem('rawstream_session_token');
     localStorage.removeItem('rawstream_session_is_admin');
-    setHistoryList([]);
-    setCurrentVideo(null);
-    setTorrentStats(null);
     setShowAuth(true);
-    setShowAdmin(false);
-    setShowDebug(false);
     addToast('Logged out successfully', 'info');
   };
 
@@ -149,72 +166,111 @@ export default function App() {
     }
   };
 
-  const syncHistoryFromBackend = async () => {
-    if (!session.token) return;
+  const isActiveSession = (targetSession) => {
+    const active = sessionRef.current;
+    return !!(
+      targetSession?.username &&
+      targetSession?.token &&
+      active?.username === targetSession.username &&
+      active?.token === targetSession.token
+    );
+  };
+
+  const sessionFetch = (targetSession, url, options = {}) => {
+    const headers = {
+      ...options.headers,
+      Authorization: `Bearer ${targetSession.token}`
+    };
+    return fetch(url, { ...options, headers });
+  };
+
+  const syncHistoryFromBackend = async (targetSession = sessionRef.current) => {
+    if (!targetSession?.token || !targetSession?.username) {
+      setHistoryList([]);
+      return;
+    }
+
     try {
-      const res = await authenticatedFetch('/api/history');
+      const res = await fetch('/api/history', {
+        headers: { Authorization: `Bearer ${targetSession.token}` }
+      });
+      if (!isActiveSession(targetSession)) return;
+
       if (res.ok) {
         const data = await res.json();
+        if (!isActiveSession(targetSession)) return;
         setHistoryList(data);
       } else {
-        const data = mockGetHistory(session.username);
+        const data = mockGetHistory(targetSession.username);
         setHistoryList(data);
       }
     } catch (e) {
       console.error('Failed to sync history:', e);
-      const data = mockGetHistory(session.username);
+      if (!isActiveSession(targetSession)) return;
+      const data = mockGetHistory(targetSession.username);
       setHistoryList(data);
     }
   };
 
   useEffect(() => {
-    if (session.username) {
-      syncHistoryFromBackend();
+    if (session.username && session.token) {
+      setHistoryList([]);
+      syncHistoryFromBackend(session);
+    } else {
+      setHistoryList([]);
     }
   }, [session.username, session.token]);
 
   // History Actions
   const addToHistory = async (videoObj) => {
-    if (!session.token) return;
+    const targetSession = session;
+    if (!targetSession?.token) return;
     try {
-      const res = await authenticatedFetch('/api/history', {
+      const res = await sessionFetch(targetSession, '/api/history', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(videoObj)
       });
+      if (!isActiveSession(targetSession)) return;
       if (res.ok) {
         const data = await res.json();
+        if (!isActiveSession(targetSession)) return;
         setHistoryList(data);
       } else {
-        const data = mockAddHistory(session.username, videoObj);
+        const data = mockAddHistory(targetSession.username, videoObj);
         setHistoryList(data);
       }
     } catch (e) {
       console.error('Failed to add to history:', e);
-      const data = mockAddHistory(session.username, videoObj);
+      if (!isActiveSession(targetSession)) return;
+      const data = mockAddHistory(targetSession.username, videoObj);
       setHistoryList(data);
     }
   };
 
   const deleteHistoryItem = async (id, e) => {
     if (e) e.stopPropagation();
-    if (!session.token) return;
+    const targetSession = session;
+    if (!targetSession?.token) return;
     try {
-      const res = await authenticatedFetch(`/api/history/${encodeURIComponent(id)}`, {
+      const res = await sessionFetch(targetSession, `/api/history/${encodeURIComponent(id)}`, {
         method: 'DELETE'
       });
+      if (!isActiveSession(targetSession)) return;
       if (res.ok) {
         const data = await res.json();
+        if (!isActiveSession(targetSession)) return;
         setHistoryList(data);
         addToast('Stream removed from history', 'info');
       } else {
-        const data = mockDeleteHistoryItem(session.username, id);
+        const data = mockDeleteHistoryItem(targetSession.username, id);
         setHistoryList(data);
         addToast('Stream removed from history', 'info');
       }
     } catch (e) {
       console.error('Failed to delete history item:', e);
-      const data = mockDeleteHistoryItem(session.username, id);
+      if (!isActiveSession(targetSession)) return;
+      const data = mockDeleteHistoryItem(targetSession.username, id);
       setHistoryList(data);
       addToast('Stream removed from history', 'info');
     }
@@ -222,23 +278,27 @@ export default function App() {
 
   const clearAllHistory = async () => {
     if (window.confirm('Are you sure you want to clear your entire streaming history?')) {
-      if (!session.token) return;
+      const targetSession = session;
+      if (!targetSession?.token) return;
       try {
-        const res = await authenticatedFetch('/api/history', {
+        const res = await sessionFetch(targetSession, '/api/history', {
           method: 'DELETE'
         });
+        if (!isActiveSession(targetSession)) return;
         if (res.ok) {
           const data = await res.json();
+          if (!isActiveSession(targetSession)) return;
           setHistoryList(data);
           addToast('History cleared', 'info');
         } else {
-          const data = mockClearHistory(session.username);
+          const data = mockClearHistory(targetSession.username);
           setHistoryList(data);
           addToast('History cleared', 'info');
         }
       } catch (e) {
         console.error('Failed to clear history:', e);
-        const data = mockClearHistory(session.username);
+        if (!isActiveSession(targetSession)) return;
+        const data = mockClearHistory(targetSession.username);
         setHistoryList(data);
         addToast('History cleared', 'info');
       }
@@ -246,22 +306,25 @@ export default function App() {
   };
 
   const editHistoryItemTitle = async (id, newTitle) => {
-    if (!session.token) return;
+    const targetSession = session;
+    if (!targetSession?.token) return;
     try {
-      const res = await authenticatedFetch(`/api/history/${encodeURIComponent(id)}`, {
+      const res = await sessionFetch(targetSession, `/api/history/${encodeURIComponent(id)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: newTitle })
       });
+      if (!isActiveSession(targetSession)) return;
       if (res.ok) {
         const data = await res.json();
+        if (!isActiveSession(targetSession)) return;
         setHistoryList(data);
         if (currentVideo && currentVideo.id === id) {
           setCurrentVideo(prev => ({ ...prev, title: newTitle }));
         }
         addToast('Title updated', 'success');
       } else {
-        const data = mockEditHistoryTitle(session.username, id, newTitle);
+        const data = mockEditHistoryTitle(targetSession.username, id, newTitle);
         setHistoryList(data);
         if (currentVideo && currentVideo.id === id) {
           setCurrentVideo(prev => ({ ...prev, title: newTitle }));
@@ -270,7 +333,8 @@ export default function App() {
       }
     } catch (e) {
       console.error('Failed to edit history item title:', e);
-      const data = mockEditHistoryTitle(session.username, id, newTitle);
+      if (!isActiveSession(targetSession)) return;
+      const data = mockEditHistoryTitle(targetSession.username, id, newTitle);
       setHistoryList(data);
       if (currentVideo && currentVideo.id === id) {
         setCurrentVideo(prev => ({ ...prev, title: newTitle }));
@@ -280,23 +344,27 @@ export default function App() {
   };
 
   const updateHistoryProgress = async (id, currentTime, duration) => {
-    if (!session.token) return;
+    const targetSession = session;
+    if (!targetSession?.token) return;
     try {
-      const res = await authenticatedFetch(`/api/history/${encodeURIComponent(id)}`, {
+      const res = await sessionFetch(targetSession, `/api/history/${encodeURIComponent(id)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ currentTime, duration })
       });
+      if (!isActiveSession(targetSession)) return;
       if (res.ok) {
         const data = await res.json();
+        if (!isActiveSession(targetSession)) return;
         setHistoryList(data);
       } else {
-        const data = mockUpdateHistoryProgress(session.username, id, currentTime, duration);
+        const data = mockUpdateHistoryProgress(targetSession.username, id, currentTime, duration);
         setHistoryList(data);
       }
     } catch (e) {
       console.error('Failed to update progress in history:', e);
-      const data = mockUpdateHistoryProgress(session.username, id, currentTime, duration);
+      if (!isActiveSession(targetSession)) return;
+      const data = mockUpdateHistoryProgress(targetSession.username, id, currentTime, duration);
       setHistoryList(data);
     }
   };
@@ -373,8 +441,17 @@ export default function App() {
     clearTorrentPolling();
   };
 
+  const attachResumeProgress = (videoObj, resumeSource) => {
+    const currentTime = Number(resumeSource?.currentTime || 0);
+    const duration = Number(resumeSource?.duration || 0);
+    if (currentTime > 0 && duration > 0) {
+      return { ...videoObj, currentTime, duration };
+    }
+    return videoObj;
+  };
+
   // Loading Streams
-  const loadVideoFromUrl = async (url, customTitle = null) => {
+  const loadVideoFromUrl = async (url, customTitle = null, resumeSource = null) => {
     clearTorrentPolling();
     setTorrentStats(null);
     setSelectedQuality('original');
@@ -382,7 +459,7 @@ export default function App() {
 
     const service = detectService(url);
     if (service === 'torrent') {
-      loadTorrent(url);
+      loadTorrent(url, resumeSource);
       return;
     }
 
@@ -411,7 +488,7 @@ export default function App() {
       setAcodec('aac');
       setMediaDuration(0);
 
-      const videoObj = {
+      const videoObj = attachResumeProgress({
         id: fileId,
         title: customTitle || `Stream - Google Drive (${new Date().toLocaleDateString()})`,
         originalUrl: url,
@@ -419,7 +496,7 @@ export default function App() {
         rawStreamUrl: streamUrl,
         service,
         timestamp: Date.now()
-      };
+      }, resumeSource);
       setCurrentVideo(videoObj);
       setPlayerLoading(false);
       setPlayerLoaderMessage('');
@@ -486,7 +563,7 @@ export default function App() {
         if (lastPart) filename = decodeURIComponent(lastPart);
       } catch (e) { }
 
-      const videoObj = {
+      const videoObj = attachResumeProgress({
         id: fileId,
         title: customTitle || `${service === 'local' ? url.split('/').pop() : filename} (${new Date().toLocaleDateString()})`,
         originalUrl: url,
@@ -494,7 +571,7 @@ export default function App() {
         rawStreamUrl: streamUrl,
         service,
         timestamp: Date.now()
-      };
+      }, resumeSource);
       setCurrentVideo(videoObj);
       setPlayerLoading(false);
       setPlayerLoaderMessage('');
@@ -577,7 +654,7 @@ export default function App() {
     }) || files[0];
   };
 
-  const loadTorrent = async (torrentSource) => {
+  const loadTorrent = async (torrentSource, resumeSource = null) => {
     setPlayerLoading(true);
     setPlayerLoaderMessage('Processing torrent data...');
     logDebug('Processing torrent data...');
@@ -632,7 +709,7 @@ export default function App() {
         setVcodec('h264');
         setAcodec('aac');
 
-        const videoObj = {
+        const videoObj = attachResumeProgress({
           id: initialInfo.infoHash,
           title,
           originalUrl: magnetUri,
@@ -641,7 +718,7 @@ export default function App() {
           service: 'torrent',
           torrentFileIndex: initialFileIndex,
           timestamp: Date.now()
-        };
+        }, resumeSource);
 
         setCurrentVideo(videoObj);
         setPlayerLoading(false);
@@ -698,7 +775,7 @@ export default function App() {
               setVcodec('h264');
               setAcodec('aac');
 
-              const videoObj = {
+              const videoObj = attachResumeProgress({
                 id: mergedInfo.infoHash,
                 title: preferredFile ? preferredFile.name : mergedInfo.name,
                 originalUrl: magnetUri,
@@ -707,7 +784,7 @@ export default function App() {
                 service: 'torrent',
                 torrentFileIndex: targetIndex,
                 timestamp: Date.now()
-              };
+              }, resumeSource);
 
               setCurrentVideo(videoObj);
               setPlayerLoading(false);
@@ -739,7 +816,7 @@ export default function App() {
           } else {
             // Backend unavailable — fall back to browser P2P mode regardless of host type.
             logDebug('[Torrent] Backend unavailable or no info returned. Falling back to browser P2P mode.');
-            const videoObj = {
+            const videoObj = attachResumeProgress({
               id: initialInfo.infoHash,
               title: initialInfo.name || 'Torrent Stream',
               originalUrl: magnetUri,
@@ -749,7 +826,7 @@ export default function App() {
               torrentFileIndex: 0,
               forceBrowserP2P: true,     // Signal Player.jsx to use browser WebTorrent even on non-static hosts
               timestamp: Date.now()
-            };
+            }, resumeSource);
             setCurrentVideo(videoObj);
             setPlayerLoading(false);
             setPlayerLoaderMessage('');
@@ -1035,7 +1112,7 @@ export default function App() {
           currentVideo={currentVideo}
           onLoadStream={(item) => {
             handleUrlInputChange(item.originalUrl);
-            loadVideoFromUrl(item.originalUrl, item.title);
+            loadVideoFromUrl(item.originalUrl, item.title, item);
           }}
           onRename={editHistoryItemTitle}
           onDelete={deleteHistoryItem}
