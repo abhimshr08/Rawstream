@@ -64,6 +64,25 @@ export default function Controls({
   const [loadingLazySubtitle, setLoadingLazySubtitle] = useState(false);
   const blobUrlsRef = useRef([]);
 
+  const disableAllSubtitleTracks = () => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    for (let i = 0; i < video.textTracks.length; i++) {
+      video.textTracks[i].mode = 'disabled';
+    }
+  };
+
+  const removeCustomSubtitleTracks = () => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    disableAllSubtitleTracks();
+    video.querySelectorAll('track[data-custom="true"]').forEach(track => {
+      track.remove();
+    });
+  };
+
   // Cleanup all blob URLs on unmount
   useEffect(() => {
     return () => {
@@ -168,7 +187,9 @@ export default function Controls({
 
   // Reset custom subtitles and selection when video changes
   useEffect(() => {
+    removeCustomSubtitleTracks();
     setUploadedSubtitles([]);
+    setSubtitleTracks([]);
     setActiveSubtitle('off');
   }, [currentVideo]);
 
@@ -303,9 +324,15 @@ export default function Controls({
     const video = videoRef.current;
     if (!video) return;
 
-    // Clean up existing custom uploaded track elements
-    const existingTracks = video.querySelectorAll('track[data-custom="true"]');
-    existingTracks.forEach(t => t.remove());
+    // Clean up existing custom uploaded track elements. Disable first so
+    // browsers do not keep painting stale cues after a source switch.
+    removeCustomSubtitleTracks();
+
+    if (uploadedSubtitles.length === 0 || activeSubtitle === 'off') {
+      disableAllSubtitleTracks();
+      setSubtitleTracks([]);
+      return;
+    }
 
     // Re-create each custom subtitle track with shifted timestamps
     uploadedSubtitles.forEach(sub => {
@@ -354,7 +381,7 @@ export default function Controls({
     return () => {
       clearTimeout(syncTimeout);
     };
-  }, [transcodeStartTime, uploadedSubtitles, activeSubtitle]);
+  }, [currentVideo, transcodeStartTime, uploadedSubtitles, activeSubtitle]);
 
   const handleSubtitlesUpload = (e) => {
     const file = e.target.files[0];
@@ -404,6 +431,7 @@ export default function Controls({
 
   const toggleSubtitleTrack = async (label) => {
     if (label === 'off') {
+      disableAllSubtitleTracks();
       setActiveSubtitle('off');
       setShowSubtitlesMenu(false);
       addToast('Subtitles turned off', 'info');
