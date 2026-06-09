@@ -11,6 +11,7 @@ headless_*.html
 headless_*.png
 test_faststart.mp4
 test_subs.srt
+*.pdf
 
 # Data directory (user data, sessions, transcode cache)
 data/
