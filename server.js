@@ -144,10 +144,30 @@ const DEFAULT_TRACKERS = [
 
 function ensureMagnetTrackers(magnet) {
   if (!magnet || !magnet.startsWith('magnet:?')) return magnet;
-  if (magnet.includes('wss://')) return magnet;
-  const separator = magnet.includes('?') ? '&' : '?';
-  const trackerParams = DEFAULT_TRACKERS.map(t => `tr=${encodeURIComponent(t)}`).join('&');
-  return `${magnet}${separator}${trackerParams}`;
+
+  const existingTrackers = new Set();
+  const trMatches = magnet.match(/tr=[^&]*/g) || [];
+  for (const match of trMatches) {
+    try {
+      const decoded = decodeURIComponent(match.slice(3)).toLowerCase();
+      existingTrackers.add(decoded);
+    } catch (e) {}
+  }
+
+  const addedTrackers = [];
+  for (const tracker of DEFAULT_TRACKERS) {
+    if (!existingTrackers.has(tracker.toLowerCase())) {
+      addedTrackers.push(tracker);
+    }
+  }
+
+  if (addedTrackers.length > 0) {
+    const separator = magnet.includes('&') || magnet.includes('?') ? '&' : '?';
+    const trackerParams = addedTrackers.map(t => `tr=${encodeURIComponent(t)}`).join('&');
+    return `${magnet}${separator}${trackerParams}`;
+  }
+
+  return magnet;
 }
 
 function cleanOldTorrents() {
@@ -1363,7 +1383,9 @@ app.get('/api/torrent/stream', async (req, res) => {
       '.mp3': 'audio/mpeg',
       '.m4a': 'audio/mp4',
       '.aac': 'audio/aac',
-      '.ogg': 'audio/ogg'
+      '.ogg': 'audio/ogg',
+      '.srt': 'text/plain; charset=utf-8',
+      '.vtt': 'text/vtt; charset=utf-8'
     };
     const ext = path.extname(file.name).toLowerCase();
     const contentType = mimeTypes[ext] || 'application/octet-stream';
@@ -1859,11 +1881,23 @@ app.post('/api/history', async (req, res) => {
     const histories = getHistories();
     let userHistory = histories[username] || [];
 
+    // Find if there is an existing entry to preserve progress
+    const existing = userHistory.find(item => item.id === videoObj.id);
+    const mergedVideoObj = { ...videoObj };
+    if (existing) {
+      if (mergedVideoObj.currentTime === undefined || mergedVideoObj.currentTime === null || mergedVideoObj.currentTime === 0) {
+        mergedVideoObj.currentTime = existing.currentTime;
+      }
+      if (mergedVideoObj.duration === undefined || mergedVideoObj.duration === null || mergedVideoObj.duration === 0) {
+        mergedVideoObj.duration = existing.duration;
+      }
+    }
+
     // Remove existing duplicates
     userHistory = userHistory.filter(item => item.id !== videoObj.id);
     
     // Add to top of stack
-    userHistory.unshift(videoObj);
+    userHistory.unshift(mergedVideoObj);
     
     // Cap size at 50 entries
     if (userHistory.length > 50) {

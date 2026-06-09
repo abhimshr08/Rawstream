@@ -133,11 +133,23 @@ export function mockAddHistory(username, videoObj) {
   const histories = getHistories();
   let userHistory = histories[username] || [];
   
+  // Find if there is an existing entry to preserve progress
+  const existing = userHistory.find(item => item.id === videoObj.id);
+  const mergedVideoObj = { ...videoObj };
+  if (existing) {
+    if (mergedVideoObj.currentTime === undefined || mergedVideoObj.currentTime === null || mergedVideoObj.currentTime === 0) {
+      mergedVideoObj.currentTime = existing.currentTime;
+    }
+    if (mergedVideoObj.duration === undefined || mergedVideoObj.duration === null || mergedVideoObj.duration === 0) {
+      mergedVideoObj.duration = existing.duration;
+    }
+  }
+
   // Remove existing duplicate
   userHistory = userHistory.filter(item => item.id !== videoObj.id);
   
   // Insert at front
-  userHistory.unshift(videoObj);
+  userHistory.unshift(mergedVideoObj);
   
   // Cap history at 100 items
   if (userHistory.length > 100) {

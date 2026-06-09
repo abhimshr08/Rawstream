@@ -2,6 +2,138 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Play, AlertTriangle, FileVideo, Check } from 'lucide-react';
 import Controls from './Controls';
 
+const convertSrtToVtt = (srtText) => {
+  let vtt = 'WEBVTT\n\n' + srtText;
+  vtt = vtt.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2');
+  return vtt;
+};
+
+const languageMap = {
+  'eng': 'English',
+  'ara': 'Arabic',
+  'chi': 'Chinese',
+  'zho': 'Chinese',
+  'cze': 'Czech',
+  'ces': 'Czech',
+  'dan': 'Danish',
+  'dut': 'Dutch',
+  'nld': 'Dutch',
+  'fin': 'Finnish',
+  'fre': 'French',
+  'fra': 'French',
+  'ger': 'German',
+  'deu': 'German',
+  'gre': 'Greek',
+  'ell': 'Greek',
+  'heb': 'Hebrew',
+  'hin': 'Hindi',
+  'hun': 'Hungarian',
+  'ind': 'Indonesian',
+  'ita': 'Italian',
+  'jpn': 'Japanese',
+  'kor': 'Korean',
+  'nor': 'Norwegian',
+  'pol': 'Polish',
+  'por': 'Portuguese',
+  'rum': 'Romanian',
+  'ron': 'Romanian',
+  'rus': 'Russian',
+  'spa': 'Spanish',
+  'swe': 'Swedish',
+  'tha': 'Thai',
+  'tur': 'Turkish',
+  'vie': 'Vietnamese',
+  'tam': 'Tamil',
+  'tel': 'Telugu',
+  'mal': 'Malayalam',
+  'kan': 'Kannada',
+  
+  'en': 'English',
+  'ar': 'Arabic',
+  'zh': 'Chinese',
+  'cs': 'Czech',
+  'da': 'Danish',
+  'nl': 'Dutch',
+  'fi': 'Finnish',
+  'fr': 'French',
+  'de': 'German',
+  'el': 'Greek',
+  'he': 'Hebrew',
+  'hi': 'Hindi',
+  'hu': 'Hungarian',
+  'id': 'Indonesian',
+  'it': 'Italian',
+  'ja': 'Japanese',
+  'ko': 'Korean',
+  'no': 'Norwegian',
+  'pl': 'Polish',
+  'pt': 'Portuguese',
+  'ro': 'Romanian',
+  'ru': 'Russian',
+  'es': 'Spanish',
+  'sv': 'Swedish',
+  'th': 'Thai',
+  'tr': 'Turkish',
+  'vi': 'Vietnamese',
+  'ta': 'Tamil',
+  'te': 'Telugu',
+  'ml': 'Malayalam',
+  'kn': 'Kannada'
+};
+
+const getLanguageLabel = (filename) => {
+  if (!filename) return 'Unknown';
+  
+  // Remove extension
+  const nameWithoutExt = filename.replace(/\.[^/.]+$/, "");
+  const lowercaseName = nameWithoutExt.toLowerCase();
+  
+  // Split into tokens
+  const tokens = lowercaseName.split(/[^a-z0-9]/i);
+  
+  let language = null;
+  let langTokenIndex = -1;
+  
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (languageMap[token]) {
+      language = languageMap[token];
+      langTokenIndex = i;
+      break;
+    }
+  }
+  
+  if (!language) {
+    const langNames = Object.values(languageMap);
+    for (const name of langNames) {
+      if (lowercaseName.includes(name.toLowerCase())) {
+        language = name;
+        break;
+      }
+    }
+  }
+  
+  if (!language) {
+    return nameWithoutExt.split(/[-_.]/).map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+  }
+  
+  const descriptors = [];
+  tokens.forEach((token, idx) => {
+    if (idx === langTokenIndex) return;
+    if (token === 'srt' || token === 'vtt' || token === 'hi') return;
+    
+    if (token.length > 1) {
+      descriptors.push(token.charAt(0).toUpperCase() + token.slice(1));
+    }
+  });
+  
+  if (descriptors.length > 0) {
+    return `${language} (${descriptors.join(' ')})`;
+  }
+  
+  return language;
+};
+
 export default function Player({
   currentVideo,
   session,
@@ -21,7 +153,8 @@ export default function Player({
   onRecoverTorrent,
   googleAuth,            // { token, loading, error, requestToken, clearToken }
   onSyncProgress,
-  onTorrentStats          // Added callback for client-side stats
+  onTorrentStats,          // Added callback for client-side stats
+  torrentInfo
 }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -51,6 +184,8 @@ export default function Player({
 
   const webtorrentClientRef = useRef(null);
   const webtorrentStatsIntervalRef = useRef(null);
+  const serverTorrentWatchdogIntervalRef = useRef(null);
+  const serverTorrentWatchdogStateRef = useRef(null);
 
   const TORRENT_WEBRTC_TRACKERS = [
     'wss://tracker.openwebtorrent.com',
@@ -61,10 +196,30 @@ export default function Player({
 
   const ensureWebTorrentTrackers = (magnetUri) => {
     if (!magnetUri || !magnetUri.startsWith('magnet:?')) return magnetUri;
-    if (magnetUri.includes('wss://')) return magnetUri;
-    const separator = magnetUri.includes('?') ? '&' : '?';
-    const trackerParams = TORRENT_WEBRTC_TRACKERS.map(t => `tr=${encodeURIComponent(t)}`).join('&');
-    return `${magnetUri}${separator}${trackerParams}`;
+    
+    const existingTrackers = new Set();
+    const trMatches = magnetUri.match(/tr=[^&]*/g) || [];
+    for (const match of trMatches) {
+      try {
+        const decoded = decodeURIComponent(match.slice(3)).toLowerCase();
+        existingTrackers.add(decoded);
+      } catch (e) {}
+    }
+
+    const addedTrackers = [];
+    for (const tracker of TORRENT_WEBRTC_TRACKERS) {
+      if (!existingTrackers.has(tracker.toLowerCase())) {
+        addedTrackers.push(tracker);
+      }
+    }
+
+    if (addedTrackers.length > 0) {
+      const separator = magnetUri.includes('&') || magnetUri.includes('?') ? '&' : '?';
+      const trackerParams = addedTrackers.map(t => `tr=${encodeURIComponent(t)}`).join('&');
+      return `${magnetUri}${separator}${trackerParams}`;
+    }
+
+    return magnetUri;
   };
 
   const getWebtorMagnetUri = () => {
@@ -103,7 +258,7 @@ export default function Player({
     const loader = async () => {
       logDebug('[WebTorrent] Loading WebTorrent SDK dynamically via import...');
       try {
-        const module = await import('https://cdn.jsdelivr.net/npm/webtorrent@2/dist/webtorrent.min.js');
+        const module = await import('https://cdn.jsdelivr.net/npm/webtorrent@1/dist/webtorrent.min.js');
         if (!mounted) return;
         const WebTorrentConstructor = module.default || module;
         window.WebTorrent = WebTorrentConstructor;
@@ -232,28 +387,44 @@ export default function Player({
           video.removeAttribute('src');
           video.load();
 
-          // Render file directly in standard video tag using browser MSE
-          file.renderTo(video, { 
-            autoplay: true,
-            controls: false
-          }, (err) => {
-            if (err) {
-              logDebug(`[WebTorrent] renderTo failed: ${err.message}. Trying Blob URL fallback...`);
-              file.getBlobURL((blobErr, url) => {
-                if (!blobErr && video) {
-                  video.src = url;
-                  video.play().catch(playErr => logDebug(`Play blocked: ${playErr.message}`));
-                } else if (blobErr) {
-                  logDebug(`[WebTorrent] Blob fallback failed: ${blobErr.message}`);
-                  // MKV/AC3 codec not supported by browser — fall back to Webtor.io
-                  logDebug('[WebTorrent] Codec unsupported in browser. Switching to Webtor.io embed.');
-                  addToast('MKV/AC3 not supported in browser. Switching to Webtor...', 'info');
-                  setUseWebtorEmbed(true);
-                  setIsBuffering(false);
-                }
+          const handleRenderError = (err) => {
+            const errMsg = err?.message || String(err);
+            logDebug(`[WebTorrent] Direct stream call failed: ${errMsg}. Trying Blob URL fallback...`);
+            file.getBlobURL((blobErr, url) => {
+              if (!blobErr && video) {
+                video.src = url;
+                video.play().catch(playErr => logDebug(`Play blocked: ${playErr.message}`));
+              } else {
+                const failMsg = blobErr ? blobErr.message : 'Blob URL fallback failed';
+                logDebug(`[WebTorrent] Blob fallback failed: ${failMsg}`);
+                logDebug('[WebTorrent] Codec unsupported or WebTorrent streaming failed. Switching to Webtor.io embed.');
+                addToast('WebTorrent streaming failed. Switching to Webtor...', 'info');
+                setUseWebtorEmbed(true);
+                setIsBuffering(false);
+              }
+            });
+          };
+
+          try {
+            if (typeof file.streamTo === 'function') {
+              logDebug('[WebTorrent] Rendering via file.streamTo');
+              file.streamTo(video, { autoplay: true, controls: false });
+            } else if (typeof file.renderTo === 'function') {
+              logDebug('[WebTorrent] Rendering via file.renderTo');
+              file.renderTo(video, { autoplay: true, controls: false }, (err) => {
+                if (err) handleRenderError(err);
               });
+            } else if (typeof file.appendTo === 'function') {
+              logDebug('[WebTorrent] Rendering via file.appendTo');
+              file.appendTo(video, { autoplay: true, controls: false }, (err) => {
+                if (err) handleRenderError(err);
+              });
+            } else {
+              throw new Error('No rendering or streaming method found on WebTorrent file object');
             }
-          });
+          } catch (renderErr) {
+            handleRenderError(renderErr);
+          }
         }
 
         torrent.on('warning', (warning) => {
@@ -432,13 +603,49 @@ export default function Player({
   // Manual Seek Offsets
   const [transcodeStartTime, setTranscodeStartTime] = useState(0);
 
+  // Automatic Torrent Subtitles Loader
+  const [torrentSubtitleOptions, setTorrentSubtitleOptions] = useState([]);
+  const [torrentSubtitlesLoaded, setTorrentSubtitlesLoaded] = useState(false);
+
+  useEffect(() => {
+    if (currentVideo?.service === 'torrent' && torrentInfo && torrentInfo.infoHash?.toLowerCase() === currentVideo.id?.toLowerCase()) {
+      // Find all files ending in .srt or .vtt
+      const subFiles = (torrentInfo.files || []).filter(f => {
+        const name = f.name.toLowerCase();
+        return name.endsWith('.srt') || name.endsWith('.vtt');
+      });
+
+      // Map to unique labels
+      const labelCounts = {};
+      const options = subFiles.map(f => {
+        let label = getLanguageLabel(f.name);
+        if (labelCounts[label]) {
+          labelCounts[label]++;
+          label = `${label} (${labelCounts[label]})`;
+        } else {
+          labelCounts[label] = 1;
+        }
+        return {
+          label,
+          fileIndex: f.index
+        };
+      });
+
+      logDebug(`[Player Subtitles] Found ${options.length} subtitle files in torrent.`);
+      setTorrentSubtitleOptions(options);
+      setTorrentSubtitlesLoaded(true);
+    } else {
+      setTorrentSubtitleOptions([]);
+      setTorrentSubtitlesLoaded(false);
+    }
+  }, [currentVideo, torrentInfo]);
+
   // Drag Scrubber states shared
   const isDraggingProgressRef = useRef(false);
 
   // Waveform Visualizer Animation
   const visualizerAnimRef = useRef(null);
 
-  // Ambient Glow interval
   const ambientIntervalRef = useRef(null);
 
   // Progress syncing interval
@@ -469,10 +676,111 @@ export default function Player({
     }
   };
 
+  const clearServerTorrentWatchdog = () => {
+    if (serverTorrentWatchdogIntervalRef.current) {
+      logDebug('[Watchdog] Clearing server torrent watchdog interval.');
+      clearInterval(serverTorrentWatchdogIntervalRef.current);
+      serverTorrentWatchdogIntervalRef.current = null;
+    }
+    serverTorrentWatchdogStateRef.current = null;
+  };
+
+  const switchTorrentToWebtorFallback = (reason, toastMessage = 'Torrent stream stalled. Switching to Webtor...') => {
+    logDebug(reason);
+    addToast(toastMessage, 'info');
+    setUseWebtorEmbed(true);
+    setIsBuffering(false);
+    clearTorrentWatchdog();
+    clearServerTorrentWatchdog();
+  };
+
   const isTorrent = currentVideo?.service === 'torrent' ||
                     currentVideo?.streamUrl?.includes('/api/torrent/stream') ||
                     currentVideo?.streamUrl?.includes('infoHash=') ||
                     (currentVideo?.id && /^[a-fA-F0-9]{40}$/.test(currentVideo.id));
+
+  useEffect(() => {
+    const isServerTorrentBuffering =
+      currentVideo?.service === 'torrent' &&
+      torrentPlayerMode === 'server' &&
+      isBuffering &&
+      !isPlaying &&
+      !useWebtorEmbed;
+
+    if (!isServerTorrentBuffering) {
+      clearServerTorrentWatchdog();
+      return;
+    }
+
+    if (!serverTorrentWatchdogStateRef.current || serverTorrentWatchdogStateRef.current.infoHash !== currentVideo.id) {
+      serverTorrentWatchdogStateRef.current = {
+        infoHash: currentVideo.id,
+        lastHealthyAt: Date.now(),
+        lastDownloaded: 0,
+        lastProgress: 0
+      };
+    }
+
+    const pollStatus = async () => {
+      const state = serverTorrentWatchdogStateRef.current;
+      if (!state || state.infoHash !== currentVideo.id) return;
+
+      try {
+        const res = await fetch(`/api/torrent/status?infoHash=${encodeURIComponent(currentVideo.id)}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+        const status = await res.json();
+        const downloaded = Number(status.downloaded || 0);
+        const progress = Number(status.progress || 0);
+        const downloadSpeed = Number(status.downloadSpeed || 0);
+        const numPeers = Number(status.numPeers || 0);
+
+        const downloadedDelta = downloaded - state.lastDownloaded;
+        const progressDelta = progress - state.lastProgress;
+        const hasMeaningfulProgress =
+          downloadedDelta > 256 * 1024 ||
+          progressDelta > 0.0005 ||
+          downloadSpeed > 16 * 1024;
+
+        if (hasMeaningfulProgress) {
+          state.lastHealthyAt = Date.now();
+        }
+
+        state.lastDownloaded = downloaded;
+        state.lastProgress = progress;
+
+        const stalledForMs = Date.now() - state.lastHealthyAt;
+        if (stalledForMs >= 25000) {
+          switchTorrentToWebtorFallback(
+            `[Watchdog] Server torrent stalled for ${Math.round(stalledForMs / 1000)}s (peers=${numPeers}, speed=${downloadSpeed}, progress=${progress}). Switching to Webtor.io embed.`,
+            numPeers === 0
+              ? 'Server cannot reach torrent peers right now. Switching to Webtor...'
+              : 'Server torrent stream stalled. Switching to Webtor...'
+          );
+        }
+      } catch (err) {
+        const stateNow = serverTorrentWatchdogStateRef.current;
+        if (!stateNow || stateNow.infoHash !== currentVideo.id) return;
+        const stalledForMs = Date.now() - stateNow.lastHealthyAt;
+        logDebug(`[Watchdog] Failed to fetch server torrent status: ${err.message}`);
+        if (stalledForMs >= 25000) {
+          switchTorrentToWebtorFallback(
+            `[Watchdog] Server torrent status unavailable for ${Math.round(stalledForMs / 1000)}s. Switching to Webtor.io embed.`,
+            'Torrent status checks stalled. Switching to Webtor...'
+          );
+        }
+      }
+    };
+
+    void pollStatus();
+    serverTorrentWatchdogIntervalRef.current = setInterval(() => {
+      void pollStatus();
+    }, 5000);
+
+    return () => {
+      clearServerTorrentWatchdog();
+    };
+  }, [currentVideo, torrentPlayerMode, isBuffering, isPlaying, useWebtorEmbed]);
 
   // Format Helper
   const formatTime = (seconds) => {
@@ -778,7 +1086,6 @@ export default function Player({
   const handlePlay = () => {
     setIsPlaying(true);
     setIsBuffering(false);
-    clearTorrentWatchdog();
     // Reset loader message so stale 'Seeking...' text never lingers after seek completes
     setLoaderMessage('Buffering stream...');
     
@@ -872,10 +1179,10 @@ export default function Player({
               return;
             }
           }
-          logDebug('[Playback] Server stream mode failed. Switching to Webtor.io embed fallback.');
-          addToast('Server stream failed. Switching to Webtor stream...', 'info');
-          setUseWebtorEmbed(true);
-          setIsBuffering(false);
+          switchTorrentToWebtorFallback(
+            '[Playback] Server stream mode failed. Switching to Webtor.io embed fallback.',
+            'Server stream failed. Switching to Webtor stream...'
+          );
           return;
         }
       }
@@ -897,10 +1204,10 @@ export default function Player({
         }, recoveryDelay);
         return;
       } else {
-        logDebug('[Playback] Torrent recovery failed mid-playback. Switching to Webtor.io embed fallback.');
-        addToast('Torrent stream failed mid-playback. Switching to Webtor...', 'info');
-        setUseWebtorEmbed(true);
-        setIsBuffering(false);
+        switchTorrentToWebtorFallback(
+          '[Playback] Torrent recovery failed mid-playback. Switching to Webtor.io embed fallback.',
+          'Torrent stream failed mid-playback. Switching to Webtor...'
+        );
         return;
       }
     }
@@ -1139,10 +1446,10 @@ export default function Player({
         if (torrentWatchdogRef.current) clearTimeout(torrentWatchdogRef.current);
         torrentWatchdogRef.current = setTimeout(() => {
           if (isTorrent && !useWebtorEmbed) {
-            logDebug('[Watchdog] Server stream failed to load or buffer within 25s. Switching to Webtor.io embed.');
-            addToast('Server stream failed. Switching to Webtor stream...', 'info');
-            setUseWebtorEmbed(true);
-            setIsBuffering(false);
+            switchTorrentToWebtorFallback(
+              '[Watchdog] Server stream failed to load or buffer within 25s. Switching to Webtor.io embed.',
+              'Server stream failed. Switching to Webtor stream...'
+            );
           }
         }, 25000);
       }
@@ -1162,6 +1469,7 @@ export default function Player({
       video.removeAttribute('src');
       video.load();
       clearTorrentWatchdog();
+      clearServerTorrentWatchdog();
     };
   }, [currentVideo, torrentPlayerMode, needsTranscode, selectedQuality, vcodec, acodec, useEmbed, useWebtorEmbed]);
 
@@ -1591,6 +1899,8 @@ export default function Player({
           mediaDuration={mediaDuration}
           needsTranscode={needsTranscode}
           currentVideo={currentVideo}
+          torrentSubtitleOptions={torrentSubtitleOptions}
+          torrentSubtitlesLoaded={torrentSubtitlesLoaded}
           selectedQuality={selectedQuality}
           setSelectedQuality={setSelectedQuality}
           videoRotation={videoRotation}

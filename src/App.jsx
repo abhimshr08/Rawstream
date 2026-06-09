@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  Folder, User, LogOut, HelpCircle, HardDrive, 
-  Trash2, X, Plus, Clipboard, FileText, AlertCircle, 
+import {
+  Folder, User, LogOut, HelpCircle, HardDrive,
+  Trash2, X, Plus, Clipboard, FileText, AlertCircle,
   CheckCircle2, Info, Play, Settings
 } from 'lucide-react';
 
@@ -13,11 +13,11 @@ import DebugPanel from './components/DebugPanel';
 import TorrentStats from './components/TorrentStats';
 import TorrentFilesExplorer from './components/TorrentFilesExplorer';
 import { useGoogleAuth } from './hooks/useGoogleAuth';
-import { 
-  mockGetHistory, 
-  mockAddHistory, 
-  mockDeleteHistoryItem, 
-  mockClearHistory, 
+import {
+  mockGetHistory,
+  mockAddHistory,
+  mockDeleteHistoryItem,
+  mockClearHistory,
   mockEditHistoryTitle,
   mockUpdateHistoryProgress
 } from './utils/mockBackend';
@@ -61,20 +61,20 @@ export default function App() {
   const [dragOver, setDragOver] = useState(false);
   const [playerLoading, setPlayerLoading] = useState(false);
   const [playerLoaderMessage, setPlayerLoaderMessage] = useState('');
-  
+
   // Torrent and Media State
   const [historyList, setHistoryList] = useState([]);
   const [streamUrlInput, setStreamUrlInput] = useState('');
   const [detectedService, setDetectedService] = useState('unknown'); // 'google', 'onedrive', 'torrent', 'local', 'unknown'
   const [currentVideo, setCurrentVideo] = useState(null);
-  
+
   // Transco  // Loading Streams
   const [mediaDuration, setMediaDuration] = useState(0);
   const [needsTranscode, setNeedsTranscode] = useState(false);
   const [vcodec, setVcodec] = useState('');
   const [acodec, setAcodec] = useState('');
   const [selectedQuality, setSelectedQuality] = useState('original');
-  
+
   // Torrent Stats
   const [torrentStats, setTorrentStats] = useState(null); // { name, speed, peers, progress }
   const [activeTorrentInfo, setActiveTorrentInfo] = useState(null);
@@ -314,9 +314,9 @@ export default function App() {
       return 'google';
     }
     if (
-      lowerUrl.includes('onedrive.live.com') || 
-      lowerUrl.includes('1drv.ms') || 
-      lowerUrl.includes('sharepoint.com') || 
+      lowerUrl.includes('onedrive.live.com') ||
+      lowerUrl.includes('1drv.ms') ||
+      lowerUrl.includes('sharepoint.com') ||
       lowerUrl.includes('api.onedrive.com')
     ) {
       return 'onedrive';
@@ -379,7 +379,7 @@ export default function App() {
     setTorrentStats(null);
     setSelectedQuality('original');
     setActiveTorrentInfo(null);
-    
+
     const service = detectService(url);
     if (service === 'torrent') {
       loadTorrent(url);
@@ -403,14 +403,14 @@ export default function App() {
       fileId = parsed.id;
       setPlayerLoaderMessage('Loading Google Drive stream...');
       logDebug(`Loading Google Drive stream: ${fileId}`);
-      
+
       streamUrl = `https://docs.google.com/uc?export=download&id=${fileId}`;
 
       setNeedsTranscode(false);
       setVcodec('h264');
       setAcodec('aac');
       setMediaDuration(0);
-      
+
       const videoObj = {
         id: fileId,
         title: customTitle || `Stream - Google Drive (${new Date().toLocaleDateString()})`,
@@ -426,7 +426,7 @@ export default function App() {
       addToHistory(videoObj);
     } else {
       if (service === 'local' || service === 'direct') {
-        fileId = service === 'local' 
+        fileId = service === 'local'
           ? 'local_' + url.replace(/[^a-zA-Z0-9]/g, '_')
           : 'direct_' + url.replace(/[^a-zA-Z0-9]/g, '_');
         streamUrl = service === 'local'
@@ -451,7 +451,7 @@ export default function App() {
 
       setPlayerLoaderMessage('Probing media properties...');
       logDebug(`Probing media stream: ${streamUrl}`);
-      
+
       let duration = 0;
       let transc = false;
       let vc = '';
@@ -484,7 +484,7 @@ export default function App() {
         const pathParts = urlObj.pathname.split('/');
         const lastPart = pathParts[pathParts.length - 1];
         if (lastPart) filename = decodeURIComponent(lastPart);
-      } catch (e) {}
+      } catch (e) { }
 
       const videoObj = {
         id: fileId,
@@ -572,8 +572,8 @@ export default function App() {
     return files.find(f => {
       const name = f.name.toLowerCase();
       return name.endsWith('.mp4') || name.endsWith('.webm') || name.endsWith('.mkv') ||
-             name.endsWith('.avi') || name.endsWith('.mov') || name.endsWith('.ogv') ||
-             name.endsWith('.m4v') || name.endsWith('.ts');
+        name.endsWith('.avi') || name.endsWith('.mov') || name.endsWith('.ogv') ||
+        name.endsWith('.m4v') || name.endsWith('.ts');
     }) || files[0];
   };
 
@@ -687,7 +687,7 @@ export default function App() {
               const preferredFile = findPreferredTorrentFile(mergedInfo.files);
               const targetIndex = preferredFile ? preferredFile.index : 0;
               const newStreamUrl = buildTorrentServerStreamUrl(mergedInfo.infoHash, targetIndex);
-              
+
               const isPrefNative = preferredFile && (
                 preferredFile.name.toLowerCase().endsWith('.mp4') ||
                 preferredFile.name.toLowerCase().endsWith('.webm') ||
@@ -774,8 +774,8 @@ export default function App() {
     logDebug(`Switching to torrent file: "${file.name}"`);
     const magnetUri = `magnet:?xt=urn:btih:${info.infoHash}&dn=${encodeURIComponent(info.name)}`;
     const isFileNative = file.name.toLowerCase().endsWith('.mp4') ||
-                         file.name.toLowerCase().endsWith('.webm') ||
-                         file.name.toLowerCase().endsWith('.mov');
+      file.name.toLowerCase().endsWith('.webm') ||
+      file.name.toLowerCase().endsWith('.mov');
     const streamUrl = buildTorrentServerStreamUrl(info.infoHash, file.index, !isFileNative);
 
     setNeedsTranscode(!isFileNative);
@@ -947,18 +947,18 @@ export default function App() {
           <section className={`input-card glass-panel ${dragOver ? 'drag-over' : ''}`}>
             <h2>Stream anything, from anywhere</h2>
             <p className="subtitle">Paste a public Google Drive, OneDrive link, or Torrent Magnet below to play instantly.</p>
-            
+
             <form onSubmit={handleFormSubmit} className="media-parser-form-container">
               <div className="url-box-wrapper">
                 <span className="input-icon">
                   <Folder size={16} />
                 </span>
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   value={streamUrlInput}
                   onChange={(e) => handleUrlInputChange(e.target.value)}
-                  placeholder="Paste cloud link, magnet, or drop video/.torrent file..." 
-                  required 
+                  placeholder="Paste cloud link, magnet, or drop video/.torrent file..."
+                  required
                   autoComplete="off"
                   aria-label="Video or Torrent Link"
                 />
@@ -975,15 +975,15 @@ export default function App() {
                 <button type="button" className="reset-fields-action" onClick={clearInput}>Clear</button>
               </div>
             </form>
-            
+
             <div className="form-metadata-row">
               {detectedService !== 'unknown' && (
                 <div className="detection-badge">
                   <span className="badge-dot"></span>
                   <span>{
                     detectedService === 'google' ? 'Google Drive' :
-                    detectedService === 'onedrive' ? 'OneDrive' :
-                    detectedService === 'torrent' ? 'BitTorrent Magnet' : 'Local File'
+                      detectedService === 'onedrive' ? 'OneDrive' :
+                        detectedService === 'torrent' ? 'BitTorrent Magnet' : 'Local File'
                   } detected</span>
                 </div>
               )}
@@ -994,8 +994,8 @@ export default function App() {
           </section>
 
           {/* Core Player container */}
-          <Player 
-            currentVideo={currentVideo} 
+          <Player
+            currentVideo={currentVideo}
             session={session}
             mediaDuration={mediaDuration}
             setMediaDuration={setMediaDuration}
@@ -1014,10 +1014,11 @@ export default function App() {
             googleAuth={googleAuth}
             onSyncProgress={updateHistoryProgress}
             onTorrentStats={setTorrentStats}
+            torrentInfo={activeTorrentInfo}
           />
 
           {/* Torrent Files Explorer Drawer */}
-          <TorrentFilesExplorer 
+          <TorrentFilesExplorer
             torrentInfo={activeTorrentInfo}
             onPlayFile={selectTorrentFile}
             currentVideo={currentVideo}
@@ -1028,9 +1029,9 @@ export default function App() {
         </main>
 
         {/* Stream History logs sidebar */}
-        <HistorySidebar 
-          show={showHistory} 
-          list={historyList} 
+        <HistorySidebar
+          show={showHistory}
+          list={historyList}
           currentVideo={currentVideo}
           onLoadStream={(item) => {
             handleUrlInputChange(item.originalUrl);
@@ -1043,9 +1044,9 @@ export default function App() {
       </div>
 
       {/* Settings Panel dialog drawer */}
-      <dialog 
-        ref={settingsDialogRef} 
-        id="settings-dialog" 
+      <dialog
+        ref={settingsDialogRef}
+        id="settings-dialog"
         className="glass-dialog admin-dialog"
         onClose={() => setShowSettings(false)}
       >
@@ -1054,8 +1055,8 @@ export default function App() {
             <Settings size={18} style={{ color: 'var(--accent-primary)' }} />
             Application Settings
           </h3>
-          <button 
-            className="close-dialog-btn" 
+          <button
+            className="close-dialog-btn"
             aria-label="Close settings"
             onClick={() => setShowSettings(false)}
             style={{ background: 'none', border: 'none', color: 'var(--text-dimmed)', cursor: 'pointer' }}
@@ -1067,8 +1068,8 @@ export default function App() {
         <div className="dialog-body admin-dialog-body" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
           <div className="auth-input-group" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
             <label htmlFor="settings-client-id" style={{ fontSize: '0.85rem', color: 'rgba(255,255,255,0.7)', fontWeight: '500' }}>Google OAuth Client ID</label>
-            <input 
-              type="text" 
+            <input
+              type="text"
               id="settings-client-id"
               placeholder="Paste Google OAuth Client ID here..."
               defaultValue={googleAuth.clientId || ''}
@@ -1090,10 +1091,10 @@ export default function App() {
               Configure a Google OAuth Client ID to bypass download quotas on private Google Drive files. The client ID is stored locally in your browser.
             </p>
           </div>
-          
+
           <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '1.25rem', marginTop: '0.5rem' }}>
             <h4 style={{ margin: '0 0 0.5rem 0', color: '#ef4444', fontSize: '0.85rem', fontWeight: '600' }}>Danger Zone</h4>
-            <button 
+            <button
               onClick={() => {
                 if (window.confirm('This will wipe all local users, stream history, and settings. Are you sure?')) {
                   localStorage.clear();
@@ -1120,15 +1121,15 @@ export default function App() {
       </dialog>
 
       {/* Admin Panel dialog drawer */}
-      <AdminDashboard 
-        open={showAdmin} 
-        onClose={() => setShowAdmin(false)} 
+      <AdminDashboard
+        open={showAdmin}
+        onClose={() => setShowAdmin(false)}
         authenticatedFetch={authenticatedFetch}
         addToast={addToast}
       />
 
       {/* Admin Live debugger panel */}
-      <DebugPanel 
+      <DebugPanel
         show={showDebug && session.isAdmin}
         logs={debugLogs}
         onClear={() => setDebugLogs('[Logs cleared]')}
@@ -1186,7 +1187,7 @@ export default function App() {
       )}
 
       {/* Auth Screen Overlay overlay */}
-      <AuthOverlay 
+      <AuthOverlay
         show={showAuth}
         onSuccess={handleSetSession}
       />

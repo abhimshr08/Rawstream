@@ -31,7 +31,9 @@ export default function Controls({
   toggleFullscreen,
   isTheater,
   toggleTheater,
-  bufferPercent
+  bufferPercent,
+  torrentSubtitleOptions = [],
+  torrentSubtitlesLoaded = false
 }) {
   // Volume state
   const [volume, setVolume] = useState(1);
@@ -59,6 +61,7 @@ export default function Controls({
   const [activeSubtitle, setActiveSubtitle] = useState('off');
   const [subtitlesUrl, setSubtitlesUrl] = useState('');
   const [uploadedSubtitles, setUploadedSubtitles] = useState([]); // Array of { label, content }
+  const [loadingLazySubtitle, setLoadingLazySubtitle] = useState(false);
   const blobUrlsRef = useRef([]);
 
   // Cleanup all blob URLs on unmount
@@ -161,6 +164,12 @@ export default function Controls({
 
     video.addEventListener('volumechange', syncVolumeState);
     return () => video.removeEventListener('volumechange', syncVolumeState);
+  }, [currentVideo]);
+
+  // Reset custom subtitles and selection when video changes
+  useEffect(() => {
+    setUploadedSubtitles([]);
+    setActiveSubtitle('off');
   }, [currentVideo]);
 
   // Volume Handlers
@@ -393,10 +402,49 @@ export default function Controls({
     }
   };
 
-  const toggleSubtitleTrack = (label) => {
-    setActiveSubtitle(label);
-    setShowSubtitlesMenu(false);
-    addToast(label === 'off' ? 'Subtitles turned off' : `Subtitles: ${label}`, 'info');
+  const toggleSubtitleTrack = async (label) => {
+    if (label === 'off') {
+      setActiveSubtitle('off');
+      setShowSubtitlesMenu(false);
+      addToast('Subtitles turned off', 'info');
+      return;
+    }
+
+    // Check if it's a torrent subtitle track that hasn't been fetched yet
+    const option = torrentSubtitleOptions.find(opt => opt.label === label);
+    const alreadyFetched = uploadedSubtitles.some(x => x.label === label);
+
+    if (option && !alreadyFetched) {
+      setLoadingLazySubtitle(true);
+      addToast(`Fetching ${label} subtitles...`, 'info');
+      try {
+        const url = `/api/torrent/stream?infoHash=${encodeURIComponent(currentVideo.id)}&fileIndex=${encodeURIComponent(option.fileIndex)}`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        let text = await res.text();
+        
+        // Convert SRT to VTT if needed
+        if (label.toLowerCase().endsWith('.srt') || (text.includes('-->') && !text.startsWith('WEBVTT'))) {
+          text = convertSrtToVtt(text);
+        }
+        
+        setUploadedSubtitles(prev => [
+          ...prev.filter(x => x.label !== label),
+          { label, content: text }
+        ]);
+        setActiveSubtitle(label);
+        addToast(`${label} subtitles loaded.`, 'success');
+      } catch (err) {
+        addToast(`Failed to load subtitles: ${err.message}`, 'error');
+      } finally {
+        setLoadingLazySubtitle(false);
+        setShowSubtitlesMenu(false);
+      }
+    } else {
+      setActiveSubtitle(label);
+      setShowSubtitlesMenu(false);
+      addToast(`Subtitles: ${label}`, 'info');
+    }
   };
 
   // Close all other dropdowns when one opens
@@ -509,51 +557,96 @@ export default function Controls({
             <button className="control-btn" title="Subtitles" onClick={(e) => { e.stopPropagation(); openDropdown(setShowSubtitlesMenu); }}>
               <Subtitles />
             </button>
-            {showSubtitlesMenu && (
-              <ul className="dropdown-menu" id="subtitles-menu" style={{ width: '220px', bottom: '40px' }}>
-                <li className={activeSubtitle === 'off' ? 'active' : ''} onClick={() => toggleSubtitleTrack('off')}>
-                  Off
-                </li>
-                {subtitleTracks.map(t => (
-                  <li key={t.label} className={activeSubtitle === t.label ? 'active' : ''} onClick={() => toggleSubtitleTrack(t.label)}>
-                    {t.label}
-                  </li>
-                ))}
-                <li className="menu-divider"></li>
-                <li style={{ padding: '8px 12px', cursor: 'default' }}>
-                  <label htmlFor="sub-upload-file" style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-dimmed)', marginBottom: '4px', cursor: 'pointer' }}>
-                    Upload subtitles (.srt, .vtt)
-                  </label>
-                  <input 
-                    type="file" 
-                    id="sub-upload-file" 
-                    accept=".srt,.vtt" 
-                    onChange={handleSubtitlesUpload} 
-                    style={{ fontSize: '0.75rem', width: '100%', color: 'white' }} 
-                  />
-                </li>
-                <li className="menu-divider"></li>
-                <li style={{ padding: '8px 12px', cursor: 'default', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <span style={{ fontSize: '0.8rem', color: 'var(--text-dimmed)' }}>Load Remote VTT URL</span>
-                  <div style={{ display: 'flex', gap: '4px' }}>
-                    <input 
-                      type="text" 
-                      placeholder="https://..." 
-                      value={subtitlesUrl}
-                      onChange={(e) => setSubtitlesUrl(e.target.value)}
-                      style={{ flex: 1, fontSize: '0.75rem', padding: '2px 4px', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--glass-border)', color: 'white', borderRadius: '4px' }} 
-                    />
-                    <button 
-                      type="button" 
-                      onClick={handleSubtitlesUrlLoad}
-                      style={{ fontSize: '0.75rem', padding: '2px 6px', background: 'var(--accent-primary)', border: 'none', color: 'white', borderRadius: '4px', cursor: 'pointer' }}
-                    >
-                      Load
-                    </button>
+            {showSubtitlesMenu && (() => {
+              const allSubOptions = [];
+              
+              // Add native/uploaded tracks
+              subtitleTracks.forEach(t => {
+                if (t.label !== 'off') {
+                  allSubOptions.push({
+                    label: t.label,
+                    isActive: activeSubtitle === t.label,
+                    isLazy: false
+                  });
+                }
+              });
+              
+              // Add torrent options
+              torrentSubtitleOptions.forEach(opt => {
+                if (!allSubOptions.some(item => item.label === opt.label)) {
+                  allSubOptions.push({
+                    label: opt.label,
+                    isActive: activeSubtitle === opt.label,
+                    isLazy: true
+                  });
+                }
+              });
+              
+              // Sort them alphabetically by language label
+              allSubOptions.sort((a, b) => a.label.localeCompare(b.label));
+
+              return (
+                <ul className="dropdown-menu" id="subtitles-menu" style={{ width: '220px', bottom: '40px' }}>
+                  <div style={{ maxHeight: '240px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '2px', paddingRight: '4px' }} className="custom-scrollbar">
+                    <li className={activeSubtitle === 'off' ? 'active' : ''} onClick={() => toggleSubtitleTrack('off')}>
+                      Off
+                    </li>
+                    {loadingLazySubtitle && (
+                      <li style={{ padding: '8px 12px', fontSize: '0.8rem', color: 'var(--text-dimmed)', cursor: 'default' }}>
+                        Loading subtitles...
+                      </li>
+                    )}
+                    {currentVideo?.service === 'torrent' && torrentSubtitlesLoaded && torrentSubtitleOptions.length === 0 && (
+                      <li style={{ padding: '8px 12px', fontSize: '0.8rem', color: 'var(--text-dimmed)', cursor: 'default' }}>
+                        No subtitle file available in torrent
+                      </li>
+                    )}
+                    {allSubOptions.map(opt => (
+                      <li 
+                        key={opt.label} 
+                        className={opt.isActive ? 'active' : ''} 
+                        onClick={() => toggleSubtitleTrack(opt.label)}
+                      >
+                        {opt.label}
+                      </li>
+                    ))}
                   </div>
-                </li>
-              </ul>
-            )}
+                  <li className="menu-divider"></li>
+                  <li style={{ padding: '8px 12px', cursor: 'default' }}>
+                    <label htmlFor="sub-upload-file" style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-dimmed)', marginBottom: '4px', cursor: 'pointer' }}>
+                      Upload subtitles (.srt, .vtt)
+                    </label>
+                    <input 
+                      type="file" 
+                      id="sub-upload-file" 
+                      accept=".srt,.vtt" 
+                      onChange={handleSubtitlesUpload} 
+                      style={{ fontSize: '0.75rem', width: '100%', color: 'white' }} 
+                    />
+                  </li>
+                  <li className="menu-divider"></li>
+                  <li style={{ padding: '8px 12px', cursor: 'default', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <span style={{ fontSize: '0.8rem', color: 'var(--text-dimmed)' }}>Load Remote VTT URL</span>
+                    <div style={{ display: 'flex', gap: '4px' }}>
+                      <input 
+                        type="text" 
+                        placeholder="https://..." 
+                        value={subtitlesUrl}
+                        onChange={(e) => setSubtitlesUrl(e.target.value)}
+                        style={{ flex: 1, fontSize: '0.75rem', padding: '2px 4px', background: 'rgba(0,0,0,0.3)', border: '1px solid var(--glass-border)', color: 'white', borderRadius: '4px' }} 
+                      />
+                      <button 
+                        type="button" 
+                        onClick={handleSubtitlesUrlLoad}
+                        style={{ fontSize: '0.75rem', padding: '2px 6px', background: 'var(--accent-primary)', border: 'none', color: 'white', borderRadius: '4px', cursor: 'pointer' }}
+                      >
+                        Load
+                      </button>
+                    </div>
+                  </li>
+                </ul>
+              );
+            })()}
           </div>
 
           {/* Quality preset selection */}
