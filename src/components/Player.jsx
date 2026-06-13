@@ -1614,8 +1614,38 @@ export default function Player({
           >
             ⚡ Browser P2P
           </button>
-        </div>
-      )}
+            <button
+              type="button"
+              title="Open torrent stream in an external web player (new tab)"
+              onClick={() => window.open(`https://webtor.io/show?magnet=${encodeURIComponent(getWebtorMagnetUri())}`, '_blank')}
+              style={{
+                padding: '6px 12px',
+                fontSize: '0.75rem',
+                fontWeight: '600',
+                borderRadius: '6px',
+                border: 'none',
+                cursor: 'pointer',
+                color: 'rgba(255,255,255,0.7)',
+                background: 'rgba(255,255,255,0.08)',
+                transition: 'all 0.2s',
+                outline: 'none',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px'
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.background = 'rgba(255,255,255,0.15)';
+                e.target.style.color = 'white';
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.background = 'rgba(255,255,255,0.08)';
+                e.target.style.color = 'rgba(255,255,255,0.7)';
+              }}
+            >
+              🌐 Open External Player
+            </button>
+          </div>
+        )}
 
 
       {/* Ambient Canvas Glow */}
@@ -1851,9 +1881,29 @@ export default function Player({
           id="webtor-player-container"
           style={{ width: '100%', height: '100%', position: 'relative', background: '#000', borderRadius: '12px', overflow: 'hidden', zIndex: 10 }}
         >
-          <div style={{ padding: '0.5rem 1rem', background: 'rgba(99,102,241,0.15)', borderBottom: '1px solid rgba(99,102,241,0.3)', display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.75rem', color: '#a5b4fc' }}>
-            <span>⚡</span>
-            <span>Webtor Stream — server-side HLS transcoding (handles MKV/AC3)</span>
+          <div style={{ padding: '0.5rem 1rem', background: 'rgba(99,102,241,0.15)', borderBottom: '1px solid rgba(99,102,241,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', fontSize: '0.75rem', color: '#a5b4fc' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <span>⚡</span>
+              <span>Webtor Stream — server-side HLS transcoding (handles MKV/AC3)</span>
+            </div>
+            <button
+              onClick={() => window.open(`https://webtor.io/show?magnet=${encodeURIComponent(getWebtorMagnetUri())}`, '_blank')}
+              style={{
+                background: 'rgba(99, 102, 241, 0.4)',
+                color: 'white',
+                border: '1px solid rgba(165, 180, 252, 0.4)',
+                borderRadius: '4px',
+                padding: '2px 8px',
+                fontSize: '0.7rem',
+                fontWeight: '600',
+                cursor: 'pointer',
+                transition: 'all 0.2s'
+              }}
+              onMouseEnter={(e) => e.target.style.background = 'rgba(99, 102, 241, 0.7)'}
+              onMouseLeave={(e) => e.target.style.background = 'rgba(99, 102, 241, 0.4)'}
+            >
+              🌐 Open in New Tab
+            </button>
           </div>
           <iframe
             src={`https://webtor.io/embed?magnet=${encodeURIComponent(getWebtorMagnetUri())}&poster=`}
