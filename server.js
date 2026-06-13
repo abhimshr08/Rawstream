@@ -395,13 +395,14 @@ Genießen Sie den Film!`;
     torrent.on('warning', (warning) => {
       const msg = warning?.message || String(warning);
       const lower = msg.toLowerCase();
-      // Suppress tracker errors/warnings and connection failures to prevent log flooding
+      // Suppress tracker/announce warnings and connection failures to prevent log flooding
       if (
         lower.includes('tracker') || 
         lower.includes('connect') || 
         lower.includes('fetch failed') || 
         lower.includes('getaddrinfo') || 
-        lower.includes('enotfound')
+        lower.includes('enotfound') ||
+        lower.includes('announce')
       ) {
         return;
       }
@@ -1434,6 +1435,7 @@ app.get('/api/torrent/stream', async (req, res) => {
       const stream = file.createReadStream({ start, end });
       
       stream.on('error', (err) => {
+        if (err.message && err.message.includes('prematurely')) return;
         console.error('[TorrentStream Range Error]', err.message);
       });
 
