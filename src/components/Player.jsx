@@ -172,7 +172,6 @@ export default function Player({
   const [isTheater, setIsTheater] = useState(false);
   const [useEmbed, setUseEmbed] = useState(false);
   const [webtorrentLoaded, setWebtorrentLoaded] = useState(false);
-  const [useWebtorEmbed, setUseWebtorEmbed] = useState(false); // Webtor.io fallback for MKV/AC3 torrents
   // Default to P2P mode on static hosts (GitHub Pages, Netlify, Vercel, HF Spaces) where there is no reliable backend
   const isStaticHost = typeof window !== 'undefined' && (
     window.location.hostname.endsWith('.github.io') ||
@@ -222,13 +221,6 @@ export default function Player({
     return magnetUri;
   };
 
-  const getWebtorMagnetUri = () => {
-    if (!currentVideo?.originalUrl) return '';
-    let magnetUri = currentVideo.originalUrl.startsWith('magnet:')
-      ? currentVideo.originalUrl
-      : `magnet:?xt=urn:btih:${currentVideo.id}`;
-    return ensureWebTorrentTrackers(magnetUri);
-  };
 
   // Synchronize native fullscreen changes
   useEffect(() => {
@@ -314,7 +306,7 @@ export default function Player({
 
   // Initialize WebTorrent direct client-side player when mode is p2p
   useEffect(() => {
-    if (currentVideo?.service !== 'torrent' || !webtorrentLoaded || torrentPlayerMode !== 'p2p' || useWebtorEmbed) {
+    if (currentVideo?.service !== 'torrent' || !webtorrentLoaded || torrentPlayerMode !== 'p2p') {
       if (onTorrentStats) onTorrentStats(null);
       return;
     }
@@ -357,9 +349,8 @@ export default function Player({
     // Setup loading watchdog timer (in case metadata never resolves)
     if (torrentWatchdogRef.current) clearTimeout(torrentWatchdogRef.current);
     torrentWatchdogRef.current = setTimeout(() => {
-      logDebug('[Watchdog] Browser P2P failed to load metadata or connect within 45s. Switching to Webtor.io embed.');
-      addToast('Direct P2P is slow. Switching to Webtor stream...', 'info');
-      setUseWebtorEmbed(true);
+      logDebug('[Watchdog] Browser P2P failed to load metadata or connect within 45s.');
+      addToast('Direct P2P is taking longer than expected. Still connecting to peers...', 'warning');
       setIsBuffering(false);
     }, 45000);
 
@@ -409,9 +400,9 @@ export default function Player({
               } else {
                 const failMsg = blobErr ? blobErr.message : 'Blob URL fallback failed';
                 logDebug(`[WebTorrent] Blob fallback failed: ${failMsg}`);
-                logDebug('[WebTorrent] Codec unsupported or WebTorrent streaming failed. Switching to Webtor.io embed.');
-                addToast('WebTorrent streaming failed. Switching to Webtor...', 'info');
-                setUseWebtorEmbed(true);
+                logDebug('[WebTorrent] Codec unsupported or WebTorrent streaming failed.');
+                addToast('WebTorrent streaming failed. Your browser may not support this format.', 'error');
+                setVideoError({ type: 'generic', message: 'Codec unsupported or WebTorrent streaming failed.' });
                 setIsBuffering(false);
               }
             });
@@ -445,22 +436,17 @@ export default function Player({
 
         torrent.on('noPeers', (announceType) => {
           logDebug(`[WebTorrent] noPeers event (${announceType || 'unknown'}).`);
-          // If we still have 0 peers after getting noPeers on all announce types, switch to Webtor
           if (torrent.numPeers === 0) {
-            logDebug('[WebTorrent] No WebRTC peers found. Switching to Webtor.io embed fallback.');
-            addToast('No browser peers found. Switching to Webtor stream...', 'info');
-            setUseWebtorEmbed(true);
-            setIsBuffering(false);
+            logDebug('[WebTorrent] No WebRTC peers found. Streaming may stall.');
+            addToast('No browser peers found. Buffering may stall unless WebRTC seeders connect.', 'warning');
           }
         });
 
-        // Auto-switch to Webtor after 30s with 0 download speed
+        // Setup a check after 30s if download speed is still 0
         zeroSpeedTimer = setTimeout(() => {
           if (torrent.numPeers === 0 || torrent.downloadSpeed === 0) {
-            logDebug('[WebTorrent] Still 0 peers/speed after 30s. Switching to Webtor.io embed.');
-            addToast('Switching to Webtor stream for better compatibility...', 'info');
-            setUseWebtorEmbed(true);
-            setIsBuffering(false);
+            logDebug('[WebTorrent] Still 0 peers/speed after 30s.');
+            addToast('No active download speed. Still searching for peers...', 'warning');
           }
         }, 30000);
 
@@ -487,9 +473,8 @@ export default function Player({
     } catch (err) {
       logDebug(`[WebTorrent] client.add failed: ${err.message}`);
       setIsBuffering(false);
-      // If we can't even add the torrent, fall back to Webtor
-      logDebug('[WebTorrent] client.add failed — switching to Webtor.io embed.');
-      setUseWebtorEmbed(true);
+      logDebug('[WebTorrent] client.add failed.');
+      setVideoError({ type: 'generic', message: 'Failed to add torrent client-side.' });
     }
 
     return () => {
@@ -512,7 +497,7 @@ export default function Player({
       }
       if (onTorrentStats) onTorrentStats(null);
     };
-  }, [currentVideo, webtorrentLoaded, torrentPlayerMode, useWebtorEmbed]);
+  }, [currentVideo, webtorrentLoaded, torrentPlayerMode]);
 
   // Note: Webtor embed uses direct iframe URL, no SDK loading needed
 
@@ -706,11 +691,10 @@ export default function Player({
     }
   }, [mediaDuration]);
 
-  const switchTorrentToWebtorFallback = (reason, toastMessage = 'Torrent stream stalled. Switching to Webtor...') => {
+  const switchTorrentToWebtorFallback = (reason, toastMessage = 'Torrent stream buffering stalled.') => {
     logDebug(reason);
-    addToast(toastMessage, 'info');
-    setUseWebtorEmbed(true);
-    setIsBuffering(false);
+    addToast(toastMessage, 'warning');
+    setLoaderMessage('Buffering stream (searching for peers)...');
     clearTorrentWatchdog();
     clearServerTorrentWatchdog();
   };
@@ -1208,17 +1192,17 @@ export default function Player({
               setIsBuffering(true);
               return;
             } else {
-              logDebug('[Playback] Browser P2P failed on static host. Switching to Webtor.io embed.');
-              addToast('Direct P2P failed. Switching to Webtor stream...', 'info');
-              setUseWebtorEmbed(true);
+              logDebug('[Playback] Browser P2P failed on static host.');
+              addToast('Direct P2P stream is unavailable (no WebRTC peers).', 'error');
+              setVideoError({ type: 'generic', message: 'Direct P2P stream unavailable. No WebRTC peers found.' });
               setIsBuffering(false);
               return;
             }
           }
-          switchTorrentToWebtorFallback(
-            '[Playback] Server stream mode failed. Switching to Webtor.io embed fallback.',
-            'Server stream failed. Switching to Webtor stream...'
-          );
+          logDebug('[Playback] Server stream mode failed.');
+          addToast('Server stream failed to buffer or load. Torrent may be stalled.', 'error');
+          setVideoError({ type: 'generic', message: 'Server stream failed to buffer or load. Torrent has no active peers.' });
+          setIsBuffering(false);
           return;
         }
       }
@@ -1240,10 +1224,10 @@ export default function Player({
         }, recoveryDelay);
         return;
       } else {
-        switchTorrentToWebtorFallback(
-          '[Playback] Torrent recovery failed mid-playback. Switching to Webtor.io embed fallback.',
-          'Torrent stream failed mid-playback. Switching to Webtor...'
-        );
+        logDebug('[Playback] Torrent recovery failed mid-playback.');
+        addToast('Torrent stream failed mid-playback. Torrent has no active peers.', 'error');
+        setVideoError({ type: 'generic', message: 'Torrent stream failed mid-playback. Reconnection failed.' });
+        setIsBuffering(false);
         return;
       }
     }
@@ -1392,7 +1376,7 @@ export default function Player({
     const isServerTorrent = isTorrent && torrentPlayerMode === 'server' && 
       (currentVideo.streamUrl?.includes('/api/stream') || 
        currentVideo.streamUrl?.includes('/api/torrent/stream'));
-    if (isTorrent && (useWebtorEmbed || !isServerTorrent)) {
+    if (isTorrent && !isServerTorrent) {
       setIsBuffering(false);
       return;
     }
@@ -1485,10 +1469,10 @@ export default function Player({
       if (isTorrent) {
         if (torrentWatchdogRef.current) clearTimeout(torrentWatchdogRef.current);
         torrentWatchdogRef.current = setTimeout(() => {
-          if (isTorrent && !useWebtorEmbed) {
+          if (isTorrent) {
             switchTorrentToWebtorFallback(
-              '[Watchdog] Server stream failed to load or buffer within 45s. Switching to Webtor.io embed.',
-              'Server stream failed. Switching to Webtor stream...'
+              '[Watchdog] Server stream failed to load or buffer within 45s.',
+              'Server stream failed to buffer.'
             );
           }
         }, 45000);
@@ -1614,36 +1598,6 @@ export default function Player({
           >
             ⚡ Browser P2P
           </button>
-            <button
-              type="button"
-              title="Open torrent stream in an external web player (new tab)"
-              onClick={() => window.open(`https://webtor.io/show?magnet=${encodeURIComponent(getWebtorMagnetUri())}`, '_blank')}
-              style={{
-                padding: '6px 12px',
-                fontSize: '0.75rem',
-                fontWeight: '600',
-                borderRadius: '6px',
-                border: 'none',
-                cursor: 'pointer',
-                color: 'rgba(255,255,255,0.7)',
-                background: 'rgba(255,255,255,0.08)',
-                transition: 'all 0.2s',
-                outline: 'none',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px'
-              }}
-              onMouseEnter={(e) => {
-                e.target.style.background = 'rgba(255,255,255,0.15)';
-                e.target.style.color = 'white';
-              }}
-              onMouseLeave={(e) => {
-                e.target.style.background = 'rgba(255,255,255,0.08)';
-                e.target.style.color = 'rgba(255,255,255,0.7)';
-              }}
-            >
-              🌐 Open External Player
-            </button>
           </div>
         )}
 
@@ -1875,48 +1829,9 @@ export default function Player({
         />
       )}
 
-      {/* Webtor.io embed fallback for MKV/AC3 torrents not playable via browser P2P */}
-      {useWebtorEmbed && isTorrent && !useEmbed && (
-        <div
-          id="webtor-player-container"
-          style={{ width: '100%', height: '100%', position: 'relative', background: '#000', borderRadius: '12px', overflow: 'hidden', zIndex: 10 }}
-        >
-          <div style={{ padding: '0.5rem 1rem', background: 'rgba(99,102,241,0.15)', borderBottom: '1px solid rgba(99,102,241,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', fontSize: '0.75rem', color: '#a5b4fc' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <span>⚡</span>
-              <span>Webtor Stream — server-side HLS transcoding (handles MKV/AC3)</span>
-            </div>
-            <button
-              onClick={() => window.open(`https://webtor.io/show?magnet=${encodeURIComponent(getWebtorMagnetUri())}`, '_blank')}
-              style={{
-                background: 'rgba(99, 102, 241, 0.4)',
-                color: 'white',
-                border: '1px solid rgba(165, 180, 252, 0.4)',
-                borderRadius: '4px',
-                padding: '2px 8px',
-                fontSize: '0.7rem',
-                fontWeight: '600',
-                cursor: 'pointer',
-                transition: 'all 0.2s'
-              }}
-              onMouseEnter={(e) => e.target.style.background = 'rgba(99, 102, 241, 0.7)'}
-              onMouseLeave={(e) => e.target.style.background = 'rgba(99, 102, 241, 0.4)'}
-            >
-              🌐 Open in New Tab
-            </button>
-          </div>
-          <iframe
-            src={`https://webtor.io/embed?magnet=${encodeURIComponent(getWebtorMagnetUri())}&poster=`}
-            width="100%"
-            style={{ border: 'none', height: 'calc(100% - 30px)', display: 'block' }}
-            allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
-            allowFullScreen
-            title="Webtor Torrent Player"
-          />
-        </div>
-      )}
 
-      {(!isTorrent || torrentPlayerMode === 'p2p' || torrentPlayerMode === 'server') && !useEmbed && !useWebtorEmbed && (
+
+      {(!isTorrent || torrentPlayerMode === 'p2p' || torrentPlayerMode === 'server') && !useEmbed && (
         <video
           ref={videoRef}
           id="video-element"
@@ -1970,7 +1885,7 @@ export default function Player({
 
 
       {/* Play Overlay Screen Button */}
-      {!isPlaying && !showPlaceholder && !videoError && !isBuffering && !useEmbed && !useWebtorEmbed && (!isTorrent || torrentPlayerMode === 'p2p' || torrentPlayerMode === 'server') && (
+      {!isPlaying && !showPlaceholder && !videoError && !isBuffering && !useEmbed && (!isTorrent || torrentPlayerMode === 'p2p' || torrentPlayerMode === 'server') && (
         <div id="play-overlay" className="play-overlay" onClick={togglePlay}>
           <button className="large-play-btn" aria-label="Play">
             <svg viewBox="0 0 24 24" fill="currentColor">
@@ -1981,7 +1896,7 @@ export default function Player({
       )}
 
       {/* Controls Overlay */}
-      {!showPlaceholder && !useEmbed && !useWebtorEmbed && (!isTorrent || torrentPlayerMode === 'p2p' || torrentPlayerMode === 'server') && (
+      {!showPlaceholder && !useEmbed && (!isTorrent || torrentPlayerMode === 'p2p' || torrentPlayerMode === 'server') && (
         <Controls 
           show={showControls || !isPlaying}
           videoRef={videoRef}
