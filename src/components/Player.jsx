@@ -154,7 +154,8 @@ export default function Player({
   googleAuth,            // { token, loading, error, requestToken, clearToken }
   onSyncProgress,
   onTorrentStats,          // Added callback for client-side stats
-  torrentInfo
+  torrentInfo,
+  apiBaseUrl = ''
 }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -709,8 +710,7 @@ export default function Player({
       currentVideo?.service === 'torrent' &&
       torrentPlayerMode === 'server' &&
       isBuffering &&
-      !isPlaying &&
-      !useWebtorEmbed;
+      !isPlaying;
 
     if (!isServerTorrentBuffering) {
       clearServerTorrentWatchdog();
@@ -731,7 +731,7 @@ export default function Player({
       if (!state || state.infoHash !== currentVideo.id) return;
 
       try {
-        const res = await fetch(`/api/torrent/status?infoHash=${encodeURIComponent(currentVideo.id)}`);
+        const res = await fetch(`${apiBaseUrl}/api/torrent/status?infoHash=${encodeURIComponent(currentVideo.id)}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
         const status = await res.json();
@@ -785,7 +785,7 @@ export default function Player({
     return () => {
       clearServerTorrentWatchdog();
     };
-  }, [currentVideo, torrentPlayerMode, isBuffering, isPlaying, useWebtorEmbed]);
+  }, [currentVideo, torrentPlayerMode, isBuffering, isPlaying]);
 
   // Format Helper
   const formatTime = (seconds) => {
@@ -807,7 +807,7 @@ export default function Player({
     
     logDebug(`[Player] Runtime probing stream duration: ${targetUrl}`);
     try {
-      const probeRes = await fetch(`/api/probe?url=${encodeURIComponent(targetUrl)}`);
+      const probeRes = await fetch(`${apiBaseUrl}/api/probe?url=${encodeURIComponent(targetUrl)}`);
       if (probeRes.ok) {
         const meta = await probeRes.json();
         if (meta.duration && meta.duration > 0) {
@@ -867,7 +867,7 @@ export default function Player({
     const video = videoRef.current;
     if (!video) return;
     if (!video.currentSrc) {
-      video.src = currentVideo.streamUrl;
+      video.src = currentVideo.streamUrl.startsWith('http://') || currentVideo.streamUrl.startsWith('https://') ? currentVideo.streamUrl : `${apiBaseUrl}${currentVideo.streamUrl}`;
       video.load();
     }
 
@@ -930,7 +930,7 @@ export default function Player({
       newSrc = `/api/stream?url=${encodeURIComponent(rawUrl)}&transcode=true&vcodec=${encodeURIComponent(vcodec)}&acodec=${encodeURIComponent(acodec)}${qualityParam}&start=${seconds}`;
     }
 
-    video.src = newSrc;
+    video.src = newSrc.startsWith('http://') || newSrc.startsWith('https://') ? newSrc : `${apiBaseUrl}${newSrc}`;
     video.load();
     video.play()
       .then(() => logDebug('[Transcode] Resumed stream after seek.'))
@@ -1331,9 +1331,8 @@ export default function Player({
 
     // Reset embed state only if we switch to a different video
     if (!isSameVideo) {
-      logDebug(`[Player useEffect] Video changed. Resetting useEmbed and useWebtorEmbed to false.`);
+      logDebug(`[Player useEffect] Video changed. Resetting useEmbed to false.`);
       setUseEmbed(false);
-      setUseWebtorEmbed(false);
       resumePromptedKeyRef.current = null;
     }
     if (!isSameVideo || streamUrlChanged) {
@@ -1401,7 +1400,7 @@ export default function Player({
       } else if (needsTranscode || (selectedQuality && selectedQuality !== 'original')) {
         seekTranscodedStream(autoSeekTime);
       } else {
-        video.src = currentVideo.streamUrl;
+        video.src = currentVideo.streamUrl.startsWith('http://') || currentVideo.streamUrl.startsWith('https://') ? currentVideo.streamUrl : `${apiBaseUrl}${currentVideo.streamUrl}`;
         video.load();
         video.currentTime = autoSeekTime;
         video.play()
@@ -1461,7 +1460,7 @@ export default function Player({
       }
       
       logDebug(`[Player useEffect] Setting video.src to: ${initialSrc}`);
-      video.src = initialSrc;
+      video.src = initialSrc.startsWith('http://') || initialSrc.startsWith('https://') ? initialSrc : `${apiBaseUrl}${initialSrc}`;
       video.load();
       setIsBuffering(true);
       setLoaderMessage('Buffering stream...');
@@ -1497,7 +1496,7 @@ export default function Player({
       clearTorrentWatchdog();
       clearServerTorrentWatchdog();
     };
-  }, [currentVideo, torrentPlayerMode, needsTranscode, selectedQuality, vcodec, acodec, useEmbed, useWebtorEmbed]);
+  }, [currentVideo, torrentPlayerMode, needsTranscode, selectedQuality, vcodec, acodec, useEmbed]);
 
   // Clean up timers on unmount
   useEffect(() => {
@@ -1680,7 +1679,7 @@ export default function Player({
                     addToast('Signing in with Google...', 'info');
                     const accessToken = await googleAuth.requestToken();
                      // Switch video to authenticated stream endpoint directly on Google APIs
-                     const authStreamUrl = `/api/gdrive-auth-stream?fileId=${encodeURIComponent(currentVideo.id)}&token=${encodeURIComponent(accessToken)}`;
+                     const authStreamUrl = `${apiBaseUrl}/api/gdrive-auth-stream?fileId=${encodeURIComponent(currentVideo.id)}&token=${encodeURIComponent(accessToken)}`;
                      logDebug('[GDrive] Switching to authenticated Google API proxy stream with OAuth...');
                     setVideoError(null);
                     setShowPlaceholder(false);
@@ -1927,6 +1926,7 @@ export default function Player({
           isTheater={isTheater}
           toggleTheater={toggleTheater}
           bufferPercent={bufferPercent}
+          apiBaseUrl={apiBaseUrl}
         />
       )}
 

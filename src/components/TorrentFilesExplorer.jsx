@@ -1,7 +1,7 @@
 import React from 'react';
 import { Play, Download, Video, FileText, Check } from 'lucide-react';
 
-export default function TorrentFilesExplorer({ torrentInfo, onPlayFile, currentVideo }) {
+export default function TorrentFilesExplorer({ torrentInfo, onPlayFile, currentVideo, apiBaseUrl = '' }) {
   if (!torrentInfo || !torrentInfo.files || torrentInfo.files.length <= 1) return null;
 
   const formatBytes = (bytes, decimals = 2) => {
@@ -21,7 +21,7 @@ export default function TorrentFilesExplorer({ torrentInfo, onPlayFile, currentV
   };
 
   const getDownloadUrl = (fileIndex) => {
-    return `/api/torrent/stream?infoHash=${encodeURIComponent(torrentInfo.infoHash)}&fileIndex=${fileIndex}`;
+    return `${apiBaseUrl}/api/torrent/stream?infoHash=${encodeURIComponent(torrentInfo.infoHash)}&fileIndex=${fileIndex}`;
   };
 
   return (

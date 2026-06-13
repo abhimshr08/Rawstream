@@ -33,7 +33,8 @@ export default function Controls({
   toggleTheater,
   bufferPercent,
   torrentSubtitleOptions = [],
-  torrentSubtitlesLoaded = false
+  torrentSubtitlesLoaded = false,
+  apiBaseUrl = ''
 }) {
   // Volume state
   const [volume, setVolume] = useState(1);
@@ -446,7 +447,7 @@ export default function Controls({
       setLoadingLazySubtitle(true);
       addToast(`Fetching ${label} subtitles...`, 'info');
       try {
-        const url = `/api/torrent/stream?infoHash=${encodeURIComponent(currentVideo.id)}&fileIndex=${encodeURIComponent(option.fileIndex)}`;
+        const url = `${apiBaseUrl}/api/torrent/stream?infoHash=${encodeURIComponent(currentVideo.id)}&fileIndex=${encodeURIComponent(option.fileIndex)}`;
         const res = await fetch(url);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         let text = await res.text();

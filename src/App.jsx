@@ -34,8 +34,23 @@ export default function App() {
   const sessionRef = useRef(session);
   const [showAuth, setShowAuth] = useState(!session.token);
 
+  // Backend URL Config State
+  const [backendUrl, setBackendUrlState] = useState(() => {
+    const stored = localStorage.getItem('rawstream_backend_url');
+    if (stored !== null) return stored;
+    
+    // Default dynamic resolution
+    const hostname = window.location.hostname;
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      return '';
+    }
+    return 'http://localhost:3000';
+  });
+
+  const apiBaseUrl = backendUrl.trim().replace(/\/$/, '');
+
   // Google OAuth (for quota-exceeded Drive files)
-  const googleAuth = useGoogleAuth();
+  const googleAuth = useGoogleAuth(apiBaseUrl);
 
   const [showSettings, setShowSettings] = useState(false);
   const settingsDialogRef = useRef(null);
@@ -158,7 +173,8 @@ export default function App() {
       'Authorization': `Bearer ${session.token}`
     };
     try {
-      const res = await fetch(url, { ...options, headers });
+      const fullUrl = url.startsWith('http://') || url.startsWith('https://') ? url : `${apiBaseUrl}${url}`;
+      const res = await fetch(fullUrl, { ...options, headers });
       return res;
     } catch (err) {
       console.error(`authenticatedFetch error for ${url}:`, err);
@@ -181,7 +197,8 @@ export default function App() {
       ...options.headers,
       Authorization: `Bearer ${targetSession.token}`
     };
-    return fetch(url, { ...options, headers });
+    const fullUrl = url.startsWith('http://') || url.startsWith('https://') ? url : `${apiBaseUrl}${url}`;
+    return fetch(fullUrl, { ...options, headers });
   };
 
   const syncHistoryFromBackend = async (targetSession = sessionRef.current) => {
@@ -191,7 +208,7 @@ export default function App() {
     }
 
     try {
-      const res = await fetch('/api/history', {
+      const res = await fetch(`${apiBaseUrl}/api/history`, {
         headers: { Authorization: `Bearer ${targetSession.token}` }
       });
       if (!isActiveSession(targetSession)) return;
@@ -535,7 +552,7 @@ export default function App() {
       let ac = '';
 
       try {
-        const probeRes = await fetch(`/api/probe?url=${encodeURIComponent(streamUrl)}`);
+        const probeRes = await fetch(`${apiBaseUrl}/api/probe?url=${encodeURIComponent(streamUrl)}`);
         if (probeRes.ok) {
           const meta = await probeRes.json();
           logDebug(`[Probe] Result: duration=${meta.duration}s, needsTranscode=${meta.needsTranscode}, vcodec=${meta.videoCodec}, acodec=${meta.audioCodec}`);
@@ -622,7 +639,7 @@ export default function App() {
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-      const response = await fetch(`/api/torrent/info?torrentUrl=${encodeURIComponent(magnetUri)}`, {
+      const response = await fetch(`${apiBaseUrl}/api/torrent/info?torrentUrl=${encodeURIComponent(magnetUri)}`, {
         signal: controller.signal
       });
 
@@ -729,7 +746,7 @@ export default function App() {
         // Run probe in the background
         logDebug(`[Torrent Probe] Initiating background probe for index ${initialFileIndex}...`);
         const probeUrl = buildTorrentProbeUrl(initialInfo.infoHash, initialFileIndex);
-        fetch(`/api/probe?url=${encodeURIComponent(probeUrl)}`)
+        fetch(`${apiBaseUrl}/api/probe?url=${encodeURIComponent(probeUrl)}`)
           .then(res => {
             if (res.ok) return res.json();
             throw new Error(`HTTP ${res.status}`);
@@ -794,7 +811,7 @@ export default function App() {
               // Probe in background once metadata loads
               logDebug(`[Torrent Background] Probing stream in background: ${newStreamUrl}`);
               const probeUrl = buildTorrentProbeUrl(mergedInfo.infoHash, targetIndex);
-              fetch(`/api/probe?url=${encodeURIComponent(probeUrl)}`)
+              fetch(`${apiBaseUrl}/api/probe?url=${encodeURIComponent(probeUrl)}`)
                 .then(res => {
                   if (res.ok) return res.json();
                   throw new Error(`HTTP ${res.status}`);
@@ -877,7 +894,7 @@ export default function App() {
     // Perform probe asynchronously in the background
     logDebug(`[Torrent File Probe] Initiating background probe for index ${file.index}...`);
     const probeUrl = buildTorrentProbeUrl(info.infoHash, file.index);
-    fetch(`/api/probe?url=${encodeURIComponent(probeUrl)}`)
+    fetch(`${apiBaseUrl}/api/probe?url=${encodeURIComponent(probeUrl)}`)
       .then(res => {
         if (res.ok) return res.json();
         throw new Error(`HTTP ${res.status}`);
@@ -1092,6 +1109,7 @@ export default function App() {
             onSyncProgress={updateHistoryProgress}
             onTorrentStats={setTorrentStats}
             torrentInfo={activeTorrentInfo}
+            apiBaseUrl={apiBaseUrl}
           />
 
           {/* Torrent Files Explorer Drawer */}
@@ -1099,6 +1117,7 @@ export default function App() {
             torrentInfo={activeTorrentInfo}
             onPlayFile={selectTorrentFile}
             currentVideo={currentVideo}
+            apiBaseUrl={apiBaseUrl}
           />
 
           {/* Torrent downloading status details card */}
@@ -1166,6 +1185,38 @@ export default function App() {
             />
             <p style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.4)', margin: '0.25rem 0 0 0', lineHeight: '1.4' }}>
               Configure a Google OAuth Client ID to bypass download quotas on private Google Drive files. The client ID is stored locally in your browser.
+            </p>
+          </div>
+
+          <div className="auth-input-group" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <label htmlFor="settings-backend-url" style={{ fontSize: '0.85rem', color: 'rgba(255,255,255,0.7)', fontWeight: '500' }}>Backend API URL</label>
+            <input
+              type="text"
+              id="settings-backend-url"
+              placeholder="e.g. http://localhost:3000"
+              defaultValue={backendUrl}
+              onChange={(e) => {
+                const val = e.target.value.trim();
+                setBackendUrlState(val);
+                if (val) {
+                  localStorage.setItem('rawstream_backend_url', val);
+                } else {
+                  localStorage.removeItem('rawstream_backend_url');
+                }
+              }}
+              style={{
+                background: 'rgba(255,255,255,0.03)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: '6px',
+                padding: '0.5rem 0.75rem',
+                color: 'white',
+                fontSize: '0.85rem',
+                width: '100%',
+                boxSizing: 'border-box'
+              }}
+            />
+            <p style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.4)', margin: '0.25rem 0 0 0', lineHeight: '1.4' }}>
+              Connect to a custom Express backend. Leave blank to default to relative paths (when running on localhost) or http://localhost:3000 (when deployed on static hosts like GitHub Pages).
             </p>
           </div>
 
@@ -1267,6 +1318,7 @@ export default function App() {
       <AuthOverlay
         show={showAuth}
         onSuccess={handleSetSession}
+        apiBaseUrl={apiBaseUrl}
       />
     </div>
   );

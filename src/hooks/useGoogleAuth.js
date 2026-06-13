@@ -11,7 +11,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 // Drive read-only scope — enough to download files the user has access to
 const SCOPE = 'https://www.googleapis.com/auth/drive.readonly';
 
-export function useGoogleAuth() {
+export function useGoogleAuth(apiBaseUrl = '') {
   const [clientId, setClientId] = useState('');
   const [token, setToken] = useState(null);
   const [expiry, setExpiry] = useState(0);
@@ -34,7 +34,7 @@ export function useGoogleAuth() {
     }
 
     // Fallback: Fetch from backend /api/config
-    fetch('/api/config')
+    fetch(`${apiBaseUrl}/api/config`)
       .then(res => res.json())
       .then(data => {
         if (data.googleClientId) {

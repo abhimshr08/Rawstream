@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { User, Lock, Key, CheckCircle, AlertTriangle } from 'lucide-react';
 import { mockLogin, mockRegister } from '../utils/mockBackend';
 
-export default function AuthOverlay({ show, onSuccess }) {
+export default function AuthOverlay({ show, onSuccess, apiBaseUrl = '' }) {
   const [isRegister, setIsRegister] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -22,7 +22,7 @@ export default function AuthOverlay({ show, onSuccess }) {
 
     setLoading(true);
     try {
-      const res = await fetch('/api/auth/login', {
+      const res = await fetch(`${apiBaseUrl}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: username.trim(), password })
@@ -66,7 +66,7 @@ export default function AuthOverlay({ show, onSuccess }) {
 
     setLoading(true);
     try {
-      const res = await fetch('/api/auth/register', {
+      const res = await fetch(`${apiBaseUrl}/api/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: username.trim(), password })
