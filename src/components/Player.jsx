@@ -256,17 +256,29 @@ export default function Player({
 
     let mounted = true;
     const loader = async () => {
-      logDebug('[WebTorrent] Loading WebTorrent SDK dynamically via import...');
+      logDebug('[WebTorrent] Loading WebTorrent SDK dynamically via script tag...');
       try {
-        const module = await import('https://cdn.jsdelivr.net/npm/webtorrent@1/dist/webtorrent.min.js');
+        await new Promise((resolve, reject) => {
+          if (window.WebTorrent) {
+            resolve();
+            return;
+          }
+          const script = document.createElement('script');
+          script.src = 'https://cdn.jsdelivr.net/npm/webtorrent@1/webtorrent.min.js';
+          script.async = true;
+          script.onload = () => {
+            if (window.WebTorrent) resolve();
+            else reject(new Error('WebTorrent constructor not found on window'));
+          };
+          script.onerror = (e) => reject(new Error('Failed to load script'));
+          document.head.appendChild(script);
+        });
         if (!mounted) return;
-        const WebTorrentConstructor = module.default || module;
-        window.WebTorrent = WebTorrentConstructor;
-        logDebug('[WebTorrent] WebTorrent SDK imported successfully.');
+        logDebug('[WebTorrent] WebTorrent SDK loaded successfully.');
         setWebtorrentLoaded(true);
       } catch (err) {
         if (!mounted) return;
-        logDebug('[WebTorrent] Failed to import WebTorrent SDK. Falling back to server stream.');
+        logDebug(`[WebTorrent] Failed to load WebTorrent SDK: ${err.message}. Falling back to server stream.`);
         setWebtorrentLoaded(false);
         setTorrentPlayerMode('server');
         addToast('Browser P2P failed to load WebTorrent SDK. Switching to server mode.', 'warning');
