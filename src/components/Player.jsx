@@ -357,11 +357,11 @@ export default function Player({
     // Setup loading watchdog timer (in case metadata never resolves)
     if (torrentWatchdogRef.current) clearTimeout(torrentWatchdogRef.current);
     torrentWatchdogRef.current = setTimeout(() => {
-      logDebug('[Watchdog] Browser P2P failed to load metadata or connect within 25s. Switching to Webtor.io embed.');
+      logDebug('[Watchdog] Browser P2P failed to load metadata or connect within 45s. Switching to Webtor.io embed.');
       addToast('Direct P2P is slow. Switching to Webtor stream...', 'info');
       setUseWebtorEmbed(true);
       setIsBuffering(false);
-    }, 25000);
+    }, 45000);
 
     // Setup an initial peer warning timer
     const peerTimer = setTimeout(() => {
@@ -699,6 +699,13 @@ export default function Player({
     serverTorrentWatchdogStateRef.current = null;
   };
 
+  useEffect(() => {
+    if (mediaDuration > 0) {
+      logDebug(`[Player] mediaDuration resolved to ${mediaDuration}s. Clearing watchdog.`);
+      clearTorrentWatchdog();
+    }
+  }, [mediaDuration]);
+
   const switchTorrentToWebtorFallback = (reason, toastMessage = 'Torrent stream stalled. Switching to Webtor...') => {
     logDebug(reason);
     addToast(toastMessage, 'info');
@@ -764,7 +771,7 @@ export default function Player({
         state.lastProgress = progress;
 
         const stalledForMs = Date.now() - state.lastHealthyAt;
-        if (stalledForMs >= 25000) {
+        if (stalledForMs >= 45000) {
           switchTorrentToWebtorFallback(
             `[Watchdog] Server torrent stalled for ${Math.round(stalledForMs / 1000)}s (peers=${numPeers}, speed=${downloadSpeed}, progress=${progress}). Switching to Webtor.io embed.`,
             numPeers === 0
@@ -777,7 +784,7 @@ export default function Player({
         if (!stateNow || stateNow.infoHash !== currentVideo.id) return;
         const stalledForMs = Date.now() - stateNow.lastHealthyAt;
         logDebug(`[Watchdog] Failed to fetch server torrent status: ${err.message}`);
-        if (stalledForMs >= 25000) {
+        if (stalledForMs >= 45000) {
           switchTorrentToWebtorFallback(
             `[Watchdog] Server torrent status unavailable for ${Math.round(stalledForMs / 1000)}s. Switching to Webtor.io embed.`,
             'Torrent status checks stalled. Switching to Webtor...'
@@ -1480,11 +1487,11 @@ export default function Player({
         torrentWatchdogRef.current = setTimeout(() => {
           if (isTorrent && !useWebtorEmbed) {
             switchTorrentToWebtorFallback(
-              '[Watchdog] Server stream failed to load or buffer within 25s. Switching to Webtor.io embed.',
+              '[Watchdog] Server stream failed to load or buffer within 45s. Switching to Webtor.io embed.',
               'Server stream failed. Switching to Webtor stream...'
             );
           }
-        }, 25000);
+        }, 45000);
       }
 
       checkForResumeProgress(currentVideo.id);
@@ -1495,6 +1502,7 @@ export default function Player({
         .catch((err) => {
           logDebug(`Autoplay blocked: ${err.message}. Click play to start.`);
           setIsBuffering(false); // clear spinner overlay so user can press play
+          clearTorrentWatchdog();
         });
     }
 
