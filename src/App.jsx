@@ -44,7 +44,7 @@ export default function App() {
     if (hostname === 'localhost' || hostname === '127.0.0.1') {
       return '';
     }
-    return 'http://localhost:3000';
+    return 'https://maverick9876-rawstream.hf.space';
   });
 
   const apiBaseUrl = backendUrl.trim().replace(/\/$/, '');
