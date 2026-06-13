@@ -1,0 +1,230 @@
+{
+  "testedAt": "2026-06-05T20:20:28.453Z",
+  "host": "https://huggingface.co/spaces/Maverick9876/Rawstream",
+  "spaceAppHost": "https://maverick9876-rawstream.hf.space",
+  "finalUrl": "https://maverick9876-rawstream.hf.space/",
+  "testUser": "hf_tester_90787179",
+  "results": [
+    {
+      "name": "Reach Space app",
+      "status": "passed",
+      "details": "title=\"RawStream - Stream Anything, From Anywhere\" url=\"https://maverick9876-rawstream.hf.space/\""
+    },
+    {
+      "name": "Auth overlay visible",
+      "status": "passed",
+      "details": "login/register gate rendered"
+    },
+    {
+      "name": "Register new user",
+      "status": "passed",
+      "details": "registered hf_tester_90787179"
+    },
+    {
+      "name": "Logout and login",
+      "status": "passed",
+      "details": "re-login succeeded"
+    },
+    {
+      "name": "History/settings shell renders",
+      "status": "failed",
+      "details": "No clickable selector found from: button[title=\"Settings\"], .settings-btn, .topbar-actions button:has-text(\"Settings\")"
+    },
+    {
+      "name": "Google Drive sample link loads or shows fallback",
+      "status": "passed",
+      "details": "quota/access fallback iframe rendered"
+    },
+    {
+      "name": "Torrent sample initializes",
+      "status": "passed",
+      "details": "torrent UI reacted: torrentDirect Stream (Natively Supported)"
+    },
+    {
+      "name": "Torrent sample playback attempt",
+      "status": "failed",
+      "details": "Playback did not start progressing in time"
+    },
+    {
+      "name": "Admin dialog reachable",
+      "status": "failed",
+      "details": "No clickable selector found from: button[title*=\"Admin\"], .admin-btn, button:has-text(\"Admin\")"
+    }
+  ],
+  "failedRequests": [
+    {
+      "url": "https://docs.google.com/uc?export=download&id=1rqN6qiR7lhAxsDpOj-8nMPNHYuhObySQ",
+      "failure": "net::ERR_BLOCKED_BY_ORB"
+    },
+    {
+      "url": "https://drive.google.com/file/d/08ada5a7a6183aae1e09d831df6748d566095a10/preview",
+      "failure": "net::ERR_ABORTED"
+    },
+    {
+      "url": "https://youtube.googleapis.com/youtubei/v1/log_event?alt=json",
+      "failure": "net::ERR_ABORTED"
+    },
+    {
+      "url": "https://clients6.google.com/drive/v2beta/files/1rqN6qiR7lhAxsDpOj-8nMPNHYuhObySQ?fields=id%2Ckind,lastViewedByMeDate&modifiedDateBehavior=NO_CHANGE&supportsTeamDrives=true&enforceSingleParent=true&key=AIzaSyC1eQ1xj69IdTMeii5r7brs3R90eck-m7k",
+      "failure": "net::ERR_ABORTED"
+    },
+    {
+      "url": "https://clients6.google.com/drive/v2beta/files/1rqN6qiR7lhAxsDpOj-8nMPNHYuhObySQ?fields=id%2Ckind,lastViewedByMeDate&modifiedDateBehavior=NO_CHANGE&supportsTeamDrives=true&enforceSingleParent=true&key=AIzaSyC1eQ1xj69IdTMeii5r7brs3R90eck-m7k",
+      "failure": "net::ERR_ABORTED"
+    },
+    {
+      "url": "https://play.google.com/log?format=json&hasfast=true",
+      "failure": "net::ERR_ABORTED"
+    },
+    {
+      "url": "https://content-workspacevideo-pa.googleapis.com/v1/drive/media/1rqN6qiR7lhAxsDpOj-8nMPNHYuhObySQ/playback?auditContext=forDisplay&key=AIzaSyDVQw45DwoYh632gvsP5vPDqEKvb-Ywnb8&%24unique=gc999",
+      "failure": "net::ERR_ABORTED"
+    },
+    {
+      "url": "https://play.google.com/log?format=json&hasfast=true",
+      "failure": "net::ERR_ABORTED"
+    },
+    {
+      "url": "https://youtube.googleapis.com/youtubei/v1/log_event?alt=json",
+      "failure": "net::ERR_ABORTED"
+    }
+  ],
+  "consoleMessages": [
+    {
+      "type": "log",
+      "text": "[Debug] [Player useEffect] Triggered: currentVideo=undefined, useEmbed=false, needsTranscode=false"
+    },
+    {
+      "type": "log",
+      "text": "[Debug] Analyzing media stream for service: google..."
+    },
+    {
+      "type": "log",
+      "text": "[Debug] Loading Google Drive stream: 1rqN6qiR7lhAxsDpOj-8nMPNHYuhObySQ"
+    },
+    {
+      "type": "log",
+      "text": "[Debug] [Player useEffect] Triggered: currentVideo=1rqN6qiR7lhAxsDpOj-8nMPNHYuhObySQ, useEmbed=false, needsTranscode=false"
+    },
+    {
+      "type": "log",
+      "text": "[Debug] [Player useEffect] State: isSameVideo=false, streamUrlChanged=true, transcodeChanged=false, qualityChanged=false, vcodecChanged=true, acodecChanged=true, embedChanged=false, lastUseEmbed=false"
+    },
+    {
+      "type": "log",
+      "text": "[Debug] [Player useEffect] Video changed. Resetting useEmbed and useWebtorEmbed to false."
+    },
+    {
+      "type": "log",
+      "text": "[Debug] [Player useEffect] videoRef.current exists: true"
+    },
+    {
+      "type": "log",
+      "text": "[Debug] [Player useEffect] Setting video.src to: https://docs.google.com/uc?export=download&id=1rqN6qiR7lhAxsDpOj-8nMPNHYuhObySQ"
+    },
+    {
+      "type": "log",
+      "text": "[Debug] [Player useEffect] Invoking video.play()..."
+    },
+    {
+      "type": "log",
+      "text": "[Debug] [Player] Runtime probing stream duration: https://docs.google.com/uc?export=download&id=1rqN6qiR7lhAxsDpOj-8nMPNHYuhObySQ"
+    },
+    {
+      "type": "log",
+      "text": "[Debug] [Video Event] waiting (isBuffering => true)"
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 403 ()"
+    },
+    {
+      "type": "log",
+      "text": "[Debug] Video loading failed. URL: https://docs.google.com/uc?export=download&id=1rqN6qiR7lhAxsDpOj-8nMPNHYuhObySQ"
+    },
+    {
+      "type": "log",
+      "text": "[Debug] Autoplay blocked: Failed to load because no supported source was found.. Click play to start."
+    },
+    {
+      "type": "log",
+      "text": "[Debug] [Player useEffect] Triggered: currentVideo=1rqN6qiR7lhAxsDpOj-8nMPNHYuhObySQ, useEmbed=true, needsTranscode=false"
+    },
+    {
+      "type": "log",
+      "text": "[Debug] [Player useEffect] State: isSameVideo=true, streamUrlChanged=false, transcodeChanged=false, qualityChanged=false, vcodecChanged=false, acodecChanged=false, embedChanged=true, lastUseEmbed=false"
+    },
+    {
+      "type": "log",
+      "text": "[Debug] [Player useEffect] videoRef.current exists: false"
+    },
+    {
+      "type": "log",
+      "text": "[Debug] [Player useEffect] videoRef.current is null! Returning early."
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: the server responded with a status of 403 ()"
+    },
+    {
+      "type": "log",
+      "text": "[Debug] Processing torrent data..."
+    },
+    {
+      "type": "log",
+      "text": "[Debug] [Torrent Background] Probing stream in background: /api/torrent/stream?infoHash=08ada5a7a6183aae1e09d831df6748d566095a10&fileIndex=5"
+    },
+    {
+      "type": "log",
+      "text": "[Debug] [WebTorrent] Loading WebTorrent SDK dynamically via import..."
+    },
+    {
+      "type": "log",
+      "text": "[Debug] [Player useEffect] Triggered: currentVideo=08ada5a7a6183aae1e09d831df6748d566095a10, useEmbed=true, needsTranscode=false"
+    },
+    {
+      "type": "log",
+      "text": "[Debug] [Player useEffect] State: isSameVideo=false, streamUrlChanged=true, transcodeChanged=false, qualityChanged=false, vcodecChanged=false, acodecChanged=false, embedChanged=false, lastUseEmbed=true"
+    },
+    {
+      "type": "log",
+      "text": "[Debug] [Player useEffect] Video changed. Resetting useEmbed and useWebtorEmbed to false."
+    },
+    {
+      "type": "log",
+      "text": "[Debug] [Player useEffect] Triggered: currentVideo=08ada5a7a6183aae1e09d831df6748d566095a10, useEmbed=false, needsTranscode=false"
+    },
+    {
+      "type": "log",
+      "text": "[Debug] [Player useEffect] State: isSameVideo=true, streamUrlChanged=false, transcodeChanged=false, qualityChanged=false, vcodecChanged=false, acodecChanged=false, embedChanged=true, lastUseEmbed=true"
+    },
+    {
+      "type": "log",
+      "text": "[Debug] [WebTorrent] WebTorrent SDK imported successfully."
+    },
+    {
+      "type": "log",
+      "text": "[Debug] [WebTorrent] Initializing P2P direct stream for infoHash: 08ada5a7a6183aae1e09d831df6748d566095a10"
+    },
+    {
+      "type": "error",
+      "text": "WebSocket connection to 'wss://tracker.fastcast.nz/' failed: Error in connection establishment: net::ERR_NAME_NOT_RESOLVED"
+    },
+    {
+      "type": "error",
+      "text": "WebSocket connection to 'wss://tracker.webtorrent.io/' failed: Error in connection establishment: net::ERR_NAME_NOT_RESOLVED"
+    },
+    {
+      "type": "log",
+      "text": "[Debug] [Player] Runtime probing stream duration: /api/torrent/stream?infoHash=08ada5a7a6183aae1e09d831df6748d566095a10&fileIndex=5"
+    },
+    {
+      "type": "log",
+      "text": "[Debug] [Video Event] waiting (isBuffering => true)"
+    }
+  ],
+  "artifacts": {
+    "pngPath": "/Users/abhishekmishra/.gemini/antigravity/scratch/cloudstream/hf_space_e2e.png",
+    "htmlPath": "/Users/abhishekmishra/.gemini/antigravity/scratch/cloudstream/hf_space_e2e.html"
+  }
+}
