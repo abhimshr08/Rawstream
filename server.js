@@ -130,16 +130,14 @@ const DEFAULT_TRACKERS = [
   'udp://tracker.openbittorrent.com:80/announce',
   'udp://tracker.opentrackr.org:1337/announce',
   'udp://tracker.torrent.eu.org:451/announce',
-  'udp://9.rarbg.to:2710/announce',
   'udp://tracker.internetwarriors.net:1337/announce',
-  'udp://tracker.leechers-paradise.org:6969/announce',
-  'udp://tracker.coppersurfer.tk:6969/announce',
   'udp://exodus.desync.com:6969/announce',
+  'udp://open.stealth.si:80/announce',
+  'udp://tracker.moeking.me:6969/announce',
   // WebSocket trackers (WebTorrent compatible)
-  'wss://tracker.fastcast.nz',
   'wss://tracker.openwebtorrent.com',
   'wss://tracker.btorrent.xyz',
-  'wss://tracker.webtorrent.io'
+  'wss://tracker.files.fm'
 ];
 
 function ensureMagnetTrackers(magnet) {
@@ -395,7 +393,19 @@ Genießen Sie den Film!`;
     });
 
     torrent.on('warning', (warning) => {
-      console.warn('[TorrentManager] warning:', warning?.message || warning);
+      const msg = warning?.message || String(warning);
+      const lower = msg.toLowerCase();
+      // Suppress tracker errors/warnings and connection failures to prevent log flooding
+      if (
+        lower.includes('tracker') || 
+        lower.includes('connect') || 
+        lower.includes('fetch failed') || 
+        lower.includes('getaddrinfo') || 
+        lower.includes('enotfound')
+      ) {
+        return;
+      }
+      console.warn('[TorrentManager] warning:', msg);
     });
 
     torrent.once('ready', () => {
