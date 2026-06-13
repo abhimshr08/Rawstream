@@ -53,7 +53,7 @@ export default function HistorySidebar({
       
       <div className="sidebar-content">
         {list.length > 0 ? (
-          <ul id="history-list" class="history-list">
+          <ul id="history-list" className="history-list">
             {list.map((item) => {
               const isActive = currentVideo && currentVideo.id === item.id;
               const isEditing = editingId === item.id;

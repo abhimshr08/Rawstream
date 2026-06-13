@@ -990,8 +990,8 @@ export default function App() {
       </div>
 
       {/* Header */}
-      <header className="app-header" style={{ padding: '1.25rem 2rem' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', maxWidth: '1800px', margin: '0 auto' }}>
+      <header className="app-header">
+        <div className="header-inner">
           <div className="header-logo">
             <svg className="logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
               <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
@@ -999,7 +999,7 @@ export default function App() {
             </svg>
             <h1>Raw<span>Stream</span></h1>
           </div>
-          <div className="header-actions" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <div className="header-actions">
             {session.token && (
               <div className="user-profile-badge">
                 <User size={14} style={{ color: 'var(--accent-secondary)', filter: 'drop-shadow(0 0 4px var(--accent-secondary))' }} />
