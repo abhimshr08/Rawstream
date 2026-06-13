@@ -174,13 +174,14 @@ export default function Player({
   const [useEmbed, setUseEmbed] = useState(false);
   const [webtorrentLoaded, setWebtorrentLoaded] = useState(false);
   // Default to P2P mode on static hosts (GitHub Pages, Netlify, Vercel, HF Spaces) where there is no reliable backend
+  // BUT if apiBaseUrl is configured, the user has a backend server — always use 'server' mode
   const isStaticHost = typeof window !== 'undefined' && (
     window.location.hostname.endsWith('.github.io') ||
     window.location.hostname.endsWith('.netlify.app') ||
     window.location.hostname.endsWith('.vercel.app') ||
     window.location.hostname.endsWith('.pages.dev')
   );
-  const [torrentPlayerMode, setTorrentPlayerMode] = useState(isStaticHost ? 'p2p' : 'server'); // 'server' or 'p2p'
+  const [torrentPlayerMode, setTorrentPlayerMode] = useState((isStaticHost && !apiBaseUrl) ? 'p2p' : 'server'); // 'server' or 'p2p'
 
   const webtorrentClientRef = useRef(null);
   const webtorrentStatsIntervalRef = useRef(null);
