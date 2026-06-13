@@ -29,6 +29,8 @@ jobs:
           # Remove any accidentally staged binary blobs
           git rm --cached -r node_modules 2>/dev/null || true
           git rm --cached -r dist 2>/dev/null || true
+          # Remove any binary files matching extensions to prevent Hugging Face Space push rejection
+          find . -type f -regex '.*\.\(png\|jpg\|jpeg\|webp\|pdf\|mp4\|mov\|zip\|tar\|gz\|mp3\|wav\|ogg\|exe\|bin\|dll\|so\|dylib\)' -exec git rm --cached {} + 2>/dev/null || true
           
           git commit -m "deploy: sync to Hugging Face Spaces"
           

@@ -4,13 +4,15 @@ dist/
 .env.*
 *.log
 
-# Test artifacts
+# Test artifacts & binaries
 e2e_error.html
-e2e_error.png
 headless_*.html
-headless_*.png
-test_faststart.mp4
 test_subs.srt
+*.png
+*.webp
+*.jpg
+*.jpeg
+*.mp4
 *.pdf
 
 # Data directory (user data, sessions, transcode cache)
