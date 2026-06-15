@@ -1257,7 +1257,10 @@ export default function Player({
     addToast('Playback failed.', 'error');
   };
 
-  // Hover reveals controls
+  // Detect touch device
+  const isTouchDevice = typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+
+  // Hover reveals controls (mouse only)
   const handleMouseMove = () => {
     setShowControls(true);
     if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
@@ -1272,6 +1275,34 @@ export default function Player({
   const handleMouseLeave = () => {
     if (isPlaying) {
       setShowControls(false);
+    }
+  };
+
+  // Touch tap handler: first tap shows/hides controls, double-tap plays/pauses
+  const handlePlayerTap = (e) => {
+    // If a control button or dropdown was tapped, don't interfere
+    if (e.target.closest('#video-controls') || e.target.closest('.dropdown-menu') || 
+        e.target.closest('.torrent-mode-selector') || e.target.closest('.resume-prompt')) {
+      return;
+    }
+
+    if (isTouchDevice) {
+      // On touch: toggle controls visibility
+      if (showControls) {
+        setShowControls(false);
+        if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+      } else {
+        setShowControls(true);
+        if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+        if (isPlaying) {
+          controlsTimeoutRef.current = setTimeout(() => {
+            setShowControls(false);
+          }, 4000);
+        }
+      }
+    } else {
+      // On desktop: click toggles play/pause
+      togglePlay();
     }
   };
 
@@ -1532,6 +1563,7 @@ export default function Player({
       className={`player-container glass-panel aspect-ratio-container ${isTheater ? 'theater' : ''}`}
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
+      onClick={handlePlayerTap}
     >
       {/* Torrent Streaming Mode Toggle */}
       {currentVideo?.service === 'torrent' && !showPlaceholder && (
@@ -1839,7 +1871,6 @@ export default function Player({
           playsInline
           referrerPolicy="no-referrer"
           style={{ ...getVideoStyles(), cursor: 'pointer' }}
-          onClick={togglePlay}
           onPlay={handlePlay}
           onPause={handlePause}
           onEnded={handleEnded}

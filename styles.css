@@ -1449,6 +1449,40 @@ body {
   #volume-slider {
     display: none;
   }
+
+  /* Progress bar: always show thumb on touch devices (no hover) */
+  #progress-bar {
+    height: 6px;
+  }
+
+  #progress-bar::-webkit-slider-thumb {
+    opacity: 1;
+    height: 18px;
+    width: 18px;
+    margin-top: -6px;
+    background: var(--accent-primary);
+    box-shadow: 0 0 10px rgba(99, 102, 241, 0.6);
+  }
+
+  #progress-bar::-moz-range-thumb {
+    opacity: 1;
+    height: 18px;
+    width: 18px;
+    background: var(--accent-primary);
+    box-shadow: 0 0 10px rgba(99, 102, 241, 0.6);
+  }
+
+  /* Wider touch target for the progress container */
+  .progress-container {
+    height: 28px;
+    padding: 8px 0;
+  }
+
+  /* Larger tap targets for dropdown menu items */
+  .dropdown-menu li {
+    padding: 0.65rem 1rem;
+    font-size: 0.85rem;
+  }
 }
 
 @media (max-width: 420px) {
@@ -2320,10 +2354,12 @@ body {
 /* Toast Notification Stack */
 .toast-container {
   position: fixed;
-  bottom: 24px;
-  right: 24px;
+  bottom: calc(24px + env(safe-area-inset-bottom));
+  right: 16px;
+  left: 16px;
   display: flex;
   flex-direction: column;
+  align-items: flex-end;
   gap: 10px;
   z-index: 9999;
   pointer-events: none;
@@ -2433,3 +2469,132 @@ body {
   text-shadow: 0 0 5px rgba(168, 85, 247, 0.3);
 }
 
+/* ==========================================================================
+   Mobile / Touch Device Enhancements
+   ========================================================================== */
+
+/* Safe area insets for iPhone notch & home indicator */
+@supports (padding: env(safe-area-inset-top)) {
+  .app-header {
+    padding-top: max(1.25rem, env(safe-area-inset-top));
+    padding-left: max(2rem, env(safe-area-inset-left));
+    padding-right: max(2rem, env(safe-area-inset-right));
+  }
+
+  .player-panel {
+    padding-bottom: calc(2rem + env(safe-area-inset-bottom));
+  }
+}
+
+/* Mobile-specific layout fixes */
+@media (max-width: 768px) {
+  /* Remove the fixed max-height scroll container on mobile — let content flow naturally */
+  .player-panel {
+    max-height: none;
+    overflow-y: visible;
+  }
+
+  /* Form metadata row stacks on narrow screens */
+  .form-metadata-row {
+    flex-direction: column;
+    gap: 0.5rem;
+    align-items: flex-start;
+  }
+
+  /* Admin dialog: full-width on mobile */
+  .glass-dialog.admin-dialog {
+    width: 96%;
+    max-width: none;
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+
+  /* Admin table: horizontal scroll on mobile */
+  .admin-dialog-body {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .admin-table {
+    min-width: 500px;
+  }
+
+  /* Torrent stats grid stacks on mobile */
+  .torrent-stats-card .stats-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 0.85rem;
+  }
+
+  /* History sidebar: full width, limited height */
+  .history-sidebar {
+    max-height: 50vh;
+    overflow-y: auto;
+  }
+
+  /* Toast: narrower on mobile */
+  .toast-item {
+    max-width: 100%;
+    font-size: 0.85rem;
+    padding: 10px 14px;
+  }
+
+  /* Auth card: handle virtual keyboard pushing content up */
+  .auth-overlay {
+    align-items: flex-start;
+    padding-top: max(10vh, env(safe-area-inset-top, 40px));
+    overflow-y: auto;
+  }
+
+  .auth-card {
+    padding: 2rem 1.5rem;
+    margin-bottom: 2rem;
+  }
+
+  /* Dropdown menus: ensure they don't overflow viewport */
+  .dropdown-menu {
+    position: fixed;
+    bottom: auto;
+    right: 8px;
+    left: auto;
+    max-width: calc(100vw - 16px);
+    max-height: min(50vh, 320px);
+    overflow-y: auto;
+  }
+
+  /* Torrent mode selector: smaller on mobile */
+  .torrent-mode-selector {
+    transform: translateX(-50%) scale(0.85);
+    transform-origin: center top;
+  }
+
+  /* Large play button: slightly smaller on mobile */
+  .large-play-btn {
+    width: 60px;
+    height: 60px;
+  }
+
+  .large-play-btn svg {
+    width: 24px;
+    height: 24px;
+  }
+}
+
+/* Ultra-small mobile fixes */
+@media (max-width: 360px) {
+  .input-card h2 {
+    font-size: 1.05rem;
+  }
+
+  .input-card .subtitle {
+    font-size: 0.8rem;
+  }
+
+  .resume-prompt-content {
+    padding: 1.25rem 1.25rem;
+    max-width: 280px;
+  }
+
+  .auth-card {
+    padding: 1.5rem 1.25rem;
+  }
+}
