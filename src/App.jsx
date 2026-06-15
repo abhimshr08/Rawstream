@@ -41,10 +41,13 @@ export default function App() {
     
     // Default dynamic resolution
     const hostname = window.location.hostname;
-    const isGitHubPages = hostname.endsWith('.github.io');
+    const isStaticHost = hostname.endsWith('.github.io') ||
+      hostname.endsWith('.netlify.app') ||
+      hostname.endsWith('.vercel.app') ||
+      hostname.endsWith('.pages.dev');
     
-    if (isGitHubPages) {
-      return 'http://localhost:3000';
+    if (isStaticHost) {
+      return 'https://maverick9876-rawstream.hf.space';
     }
     
     // For local dev server running on a different port than Express backend (which defaults to 3000)
