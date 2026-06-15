@@ -1348,6 +1348,9 @@ export default function Player({
     logDebug(`[Player useEffect] Triggered: currentVideo=${currentVideo?.id}, useEmbed=${useEmbed}, needsTranscode=${needsTranscode}`);
     if (!currentVideo) {
       setUseEmbed(false);
+      setShowPlaceholder(true);
+      setIsBuffering(false);
+      setVideoError(null);
       return;
     }
 

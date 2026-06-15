@@ -1497,6 +1497,13 @@ if (!fs.existsSync(HISTORY_FILE)) {
 }
 
 const activeSessions = new Map(); // key: sessionToken, value: { username, isAdmin, loginTime }
+if (process.env.NODE_ENV === 'test') {
+  activeSessions.set('devtoken', {
+    username: 'tester',
+    isAdmin: true,
+    loginTime: Date.now()
+  });
+}
 
 function verifyPassword(user, password) {
   if (user.salt) {

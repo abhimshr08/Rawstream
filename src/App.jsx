@@ -41,10 +41,18 @@ export default function App() {
     
     // Default dynamic resolution
     const hostname = window.location.hostname;
-    if (hostname === 'localhost' || hostname === '127.0.0.1') {
-      return '';
+    const isGitHubPages = hostname.endsWith('.github.io');
+    
+    if (isGitHubPages) {
+      return 'http://localhost:3000';
     }
-    return 'https://maverick9876-rawstream.hf.space';
+    
+    // For local dev server running on a different port than Express backend (which defaults to 3000)
+    if ((hostname === 'localhost' || hostname === '127.0.0.1') && window.location.port !== '3000') {
+      return 'http://localhost:3000';
+    }
+    
+    return '';
   });
 
   const apiBaseUrl = backendUrl.trim().replace(/\/$/, '');
@@ -132,6 +140,8 @@ export default function App() {
     setSelectedQuality('original');
     setShowAdmin(false);
     setShowDebug(false);
+    setPlayerLoading(false);
+    setPlayerLoaderMessage('');
   };
 
   useEffect(() => {
@@ -153,9 +163,10 @@ export default function App() {
     addToast('Welcome back!', 'success');
   };
 
-  const handleClearSession = () => {
-    if (session.token) {
-      authenticatedFetch('/api/auth/logout', { method: 'POST' }).catch(err => console.error('Logout error:', err));
+  const handleClearSession = (skipBackendLogout = false) => {
+    if (session.token && !skipBackendLogout && !session.token.startsWith('mock-token-')) {
+      const headers = { 'Authorization': `Bearer ${session.token}` };
+      fetch(`${apiBaseUrl}/api/auth/logout`, { method: 'POST', headers }).catch(err => console.error('Logout error:', err));
     }
     sessionRef.current = { username: null, token: null, isAdmin: false };
     clearUserScopedState();
@@ -167,6 +178,14 @@ export default function App() {
     addToast('Logged out successfully', 'info');
   };
 
+  const handleUnauthorized = () => {
+    const current = sessionRef.current;
+    if (current?.token && !current.token.startsWith('mock-token-')) {
+      handleClearSession(true);
+      addToast('Session expired. Please sign in again.', 'warning');
+    }
+  };
+
   const authenticatedFetch = async (url, options = {}) => {
     const headers = {
       ...options.headers,
@@ -175,6 +194,9 @@ export default function App() {
     try {
       const fullUrl = url.startsWith('http://') || url.startsWith('https://') ? url : `${apiBaseUrl}${url}`;
       const res = await fetch(fullUrl, { ...options, headers });
+      if (res.status === 401) {
+        handleUnauthorized();
+      }
       return res;
     } catch (err) {
       console.error(`authenticatedFetch error for ${url}:`, err);
@@ -192,13 +214,22 @@ export default function App() {
     );
   };
 
-  const sessionFetch = (targetSession, url, options = {}) => {
+  const sessionFetch = async (targetSession, url, options = {}) => {
     const headers = {
       ...options.headers,
       Authorization: `Bearer ${targetSession.token}`
     };
-    const fullUrl = url.startsWith('http://') || url.startsWith('https://') ? url : `${apiBaseUrl}${url}`;
-    return fetch(fullUrl, { ...options, headers });
+    try {
+      const fullUrl = url.startsWith('http://') || url.startsWith('https://') ? url : `${apiBaseUrl}${url}`;
+      const res = await fetch(fullUrl, { ...options, headers });
+      if (res.status === 401) {
+        handleUnauthorized();
+      }
+      return res;
+    } catch (err) {
+      console.error(`sessionFetch error for ${url}:`, err);
+      throw err;
+    }
   };
 
   const syncHistoryFromBackend = async (targetSession = sessionRef.current) => {
@@ -214,10 +245,19 @@ export default function App() {
       if (!isActiveSession(targetSession)) return;
 
       if (res.ok) {
-        const data = await res.json();
-        if (!isActiveSession(targetSession)) return;
-        setHistoryList(data);
+        const contentType = res.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const data = await res.json();
+          if (!isActiveSession(targetSession)) return;
+          setHistoryList(data);
+        } else {
+          const data = mockGetHistory(targetSession.username);
+          setHistoryList(data);
+        }
       } else {
+        if (res.status === 401) {
+          handleUnauthorized();
+        }
         const data = mockGetHistory(targetSession.username);
         setHistoryList(data);
       }
@@ -228,6 +268,33 @@ export default function App() {
       setHistoryList(data);
     }
   };
+
+  useEffect(() => {
+    const checkSession = async () => {
+      const current = sessionRef.current;
+      if (current?.token && !current.token.startsWith('mock-token-')) {
+        try {
+          const res = await fetch(`${apiBaseUrl}/api/auth/me`, {
+            headers: { Authorization: `Bearer ${current.token}` }
+          });
+          if (res.status === 401) {
+            handleUnauthorized();
+          } else if (res.ok) {
+            const contentType = res.headers.get('content-type');
+            if (contentType && contentType.includes('application/json')) {
+              const data = await res.json();
+              if (data.username && (data.isAdmin !== current.isAdmin)) {
+                handleSetSession(data.username, current.token, data.isAdmin);
+              }
+            }
+          }
+        } catch (e) {
+          console.error('Failed to verify session on load:', e);
+        }
+      }
+    };
+    checkSession();
+  }, [apiBaseUrl]);
 
   useEffect(() => {
     if (session.username && session.token) {
@@ -1319,6 +1386,14 @@ export default function App() {
         show={showAuth}
         onSuccess={handleSetSession}
         apiBaseUrl={apiBaseUrl}
+        onBackendUrlChange={(val) => {
+          setBackendUrlState(val);
+          if (val) {
+            localStorage.setItem('rawstream_backend_url', val);
+          } else {
+            localStorage.removeItem('rawstream_backend_url');
+          }
+        }}
       />
     </div>
   );
