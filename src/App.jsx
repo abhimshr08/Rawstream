@@ -57,6 +57,33 @@ export default function App() {
 
   const apiBaseUrl = backendUrl.trim().replace(/\/$/, '');
 
+  const [isOfflineMode, setIsOfflineMode] = useState(() => {
+    return localStorage.getItem('rawstream_offline_mode') === 'true';
+  });
+  const [backendReachable, setBackendReachable] = useState(null);
+
+  useEffect(() => {
+    if (isOfflineMode) {
+      setBackendReachable(null);
+      return;
+    }
+    const pingBackend = async () => {
+      setBackendReachable(null);
+      try {
+        const res = await fetch(`${apiBaseUrl}/api/config`);
+        const contentType = res.headers.get('content-type');
+        if (res.ok && contentType && contentType.includes('application/json')) {
+          setBackendReachable(true);
+        } else {
+          setBackendReachable(false);
+        }
+      } catch (e) {
+        setBackendReachable(false);
+      }
+    };
+    pingBackend();
+  }, [apiBaseUrl, isOfflineMode]);
+
   // Google OAuth (for quota-exceeded Drive files)
   const googleAuth = useGoogleAuth(apiBaseUrl);
 
@@ -238,6 +265,12 @@ export default function App() {
       return;
     }
 
+    if (isOfflineMode || targetSession.token.startsWith('mock-token-')) {
+      const data = mockGetHistory(targetSession.username);
+      setHistoryList(data);
+      return;
+    }
+
     try {
       const res = await fetch(`${apiBaseUrl}/api/history`, {
         headers: { Authorization: `Bearer ${targetSession.token}` }
@@ -251,21 +284,19 @@ export default function App() {
           if (!isActiveSession(targetSession)) return;
           setHistoryList(data);
         } else {
-          const data = mockGetHistory(targetSession.username);
-          setHistoryList(data);
+          addToast('Invalid server response format', 'error');
         }
       } else {
         if (res.status === 401) {
           handleUnauthorized();
+        } else {
+          addToast('Failed to sync history from server', 'error');
         }
-        const data = mockGetHistory(targetSession.username);
-        setHistoryList(data);
       }
     } catch (e) {
       console.error('Failed to sync history:', e);
       if (!isActiveSession(targetSession)) return;
-      const data = mockGetHistory(targetSession.username);
-      setHistoryList(data);
+      addToast('Connection error: Failed to sync history', 'error');
     }
   };
 
@@ -309,6 +340,13 @@ export default function App() {
   const addToHistory = async (videoObj) => {
     const targetSession = session;
     if (!targetSession?.token) return;
+
+    if (isOfflineMode || targetSession.token.startsWith('mock-token-')) {
+      const data = mockAddHistory(targetSession.username, videoObj);
+      setHistoryList(data);
+      return;
+    }
+
     try {
       const res = await sessionFetch(targetSession, '/api/history', {
         method: 'POST',
@@ -321,14 +359,13 @@ export default function App() {
         if (!isActiveSession(targetSession)) return;
         setHistoryList(data);
       } else {
-        const data = mockAddHistory(targetSession.username, videoObj);
-        setHistoryList(data);
+        if (res.status !== 401) {
+          addToast('Failed to add to history', 'error');
+        }
       }
     } catch (e) {
       console.error('Failed to add to history:', e);
-      if (!isActiveSession(targetSession)) return;
-      const data = mockAddHistory(targetSession.username, videoObj);
-      setHistoryList(data);
+      addToast('Connection error: Failed to save history', 'error');
     }
   };
 
@@ -336,6 +373,14 @@ export default function App() {
     if (e) e.stopPropagation();
     const targetSession = session;
     if (!targetSession?.token) return;
+
+    if (isOfflineMode || targetSession.token.startsWith('mock-token-')) {
+      const data = mockDeleteHistoryItem(targetSession.username, id);
+      setHistoryList(data);
+      addToast('Stream removed from history', 'info');
+      return;
+    }
+
     try {
       const res = await sessionFetch(targetSession, `/api/history/${encodeURIComponent(id)}`, {
         method: 'DELETE'
@@ -347,16 +392,13 @@ export default function App() {
         setHistoryList(data);
         addToast('Stream removed from history', 'info');
       } else {
-        const data = mockDeleteHistoryItem(targetSession.username, id);
-        setHistoryList(data);
-        addToast('Stream removed from history', 'info');
+        if (res.status !== 401) {
+          addToast('Failed to delete history item', 'error');
+        }
       }
     } catch (e) {
       console.error('Failed to delete history item:', e);
-      if (!isActiveSession(targetSession)) return;
-      const data = mockDeleteHistoryItem(targetSession.username, id);
-      setHistoryList(data);
-      addToast('Stream removed from history', 'info');
+      addToast('Connection error: Failed to delete item', 'error');
     }
   };
 
@@ -364,6 +406,14 @@ export default function App() {
     if (window.confirm('Are you sure you want to clear your entire streaming history?')) {
       const targetSession = session;
       if (!targetSession?.token) return;
+
+      if (isOfflineMode || targetSession.token.startsWith('mock-token-')) {
+        const data = mockClearHistory(targetSession.username);
+        setHistoryList(data);
+        addToast('History cleared', 'info');
+        return;
+      }
+
       try {
         const res = await sessionFetch(targetSession, '/api/history', {
           method: 'DELETE'
@@ -375,16 +425,13 @@ export default function App() {
           setHistoryList(data);
           addToast('History cleared', 'info');
         } else {
-          const data = mockClearHistory(targetSession.username);
-          setHistoryList(data);
-          addToast('History cleared', 'info');
+          if (res.status !== 401) {
+            addToast('Failed to clear history', 'error');
+          }
         }
       } catch (e) {
         console.error('Failed to clear history:', e);
-        if (!isActiveSession(targetSession)) return;
-        const data = mockClearHistory(targetSession.username);
-        setHistoryList(data);
-        addToast('History cleared', 'info');
+        addToast('Connection error: Failed to clear history', 'error');
       }
     }
   };
@@ -392,6 +439,17 @@ export default function App() {
   const editHistoryItemTitle = async (id, newTitle) => {
     const targetSession = session;
     if (!targetSession?.token) return;
+
+    if (isOfflineMode || targetSession.token.startsWith('mock-token-')) {
+      const data = mockEditHistoryTitle(targetSession.username, id, newTitle);
+      setHistoryList(data);
+      if (currentVideo && currentVideo.id === id) {
+        setCurrentVideo(prev => ({ ...prev, title: newTitle }));
+      }
+      addToast('Title updated', 'success');
+      return;
+    }
+
     try {
       const res = await sessionFetch(targetSession, `/api/history/${encodeURIComponent(id)}`, {
         method: 'PUT',
@@ -408,28 +466,26 @@ export default function App() {
         }
         addToast('Title updated', 'success');
       } else {
-        const data = mockEditHistoryTitle(targetSession.username, id, newTitle);
-        setHistoryList(data);
-        if (currentVideo && currentVideo.id === id) {
-          setCurrentVideo(prev => ({ ...prev, title: newTitle }));
+        if (res.status !== 401) {
+          addToast('Failed to update title', 'error');
         }
-        addToast('Title updated', 'success');
       }
     } catch (e) {
       console.error('Failed to edit history item title:', e);
-      if (!isActiveSession(targetSession)) return;
-      const data = mockEditHistoryTitle(targetSession.username, id, newTitle);
-      setHistoryList(data);
-      if (currentVideo && currentVideo.id === id) {
-        setCurrentVideo(prev => ({ ...prev, title: newTitle }));
-      }
-      addToast('Title updated', 'success');
+      addToast('Connection error: Failed to update title', 'error');
     }
   };
 
   const updateHistoryProgress = async (id, currentTime, duration) => {
     const targetSession = session;
     if (!targetSession?.token) return;
+
+    if (isOfflineMode || targetSession.token.startsWith('mock-token-')) {
+      const data = mockUpdateHistoryProgress(targetSession.username, id, currentTime, duration);
+      setHistoryList(data);
+      return;
+    }
+
     try {
       const res = await sessionFetch(targetSession, `/api/history/${encodeURIComponent(id)}`, {
         method: 'PUT',
@@ -441,15 +497,9 @@ export default function App() {
         const data = await res.json();
         if (!isActiveSession(targetSession)) return;
         setHistoryList(data);
-      } else {
-        const data = mockUpdateHistoryProgress(targetSession.username, id, currentTime, duration);
-        setHistoryList(data);
       }
     } catch (e) {
       console.error('Failed to update progress in history:', e);
-      if (!isActiveSession(targetSession)) return;
-      const data = mockUpdateHistoryProgress(targetSession.username, id, currentTime, duration);
-      setHistoryList(data);
     }
   };
 
@@ -1065,6 +1115,42 @@ export default function App() {
               <polygon points="10 11 16 14 10 17 10 11"></polygon>
             </svg>
             <h1>Raw<span>Stream</span></h1>
+            {isOfflineMode && (
+              <span className="demo-mode-badge" style={{
+                background: 'rgba(245, 158, 11, 0.15)',
+                border: '1px solid rgba(245, 158, 11, 0.3)',
+                color: '#f59e0b',
+                padding: '0.15rem 0.5rem',
+                borderRadius: '12px',
+                fontSize: '0.7rem',
+                fontWeight: '600',
+                marginLeft: '0.75rem',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+                whiteSpace: 'nowrap'
+              }}>
+                ⚠️ Demo Mode
+              </span>
+            )}
+            {!isOfflineMode && backendReachable === false && (
+              <span className="demo-mode-badge" style={{
+                background: 'rgba(239, 68, 68, 0.15)',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                color: '#ef4444',
+                padding: '0.15rem 0.5rem',
+                borderRadius: '12px',
+                fontSize: '0.7rem',
+                fontWeight: '600',
+                marginLeft: '0.75rem',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+                whiteSpace: 'nowrap'
+              }}>
+                ❌ Server Offline
+              </span>
+            )}
           </div>
           <div className="header-actions">
             {session.token && (
@@ -1287,6 +1373,37 @@ export default function App() {
             </p>
           </div>
 
+          <div className="auth-input-group" style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '0.75rem', background: 'rgba(255,255,255,0.02)', padding: '0.75rem', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <input
+              type="checkbox"
+              id="settings-offline-mode"
+              checked={isOfflineMode}
+              onChange={(e) => {
+                const checked = e.target.checked;
+                setIsOfflineMode(checked);
+                if (checked) {
+                  localStorage.setItem('rawstream_offline_mode', 'true');
+                  addToast('Switched to Offline Demo Mode (local storage)', 'info');
+                } else {
+                  localStorage.removeItem('rawstream_offline_mode');
+                  addToast('Switched to Real Backend Mode', 'info');
+                }
+              }}
+              style={{
+                cursor: 'pointer',
+                width: '16px',
+                height: '16px',
+                accentColor: 'var(--accent-primary)'
+              }}
+            />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+              <label htmlFor="settings-offline-mode" style={{ fontSize: '0.85rem', color: 'white', fontWeight: '500', cursor: 'pointer', margin: 0 }}>Offline Demo Mode</label>
+              <span style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.4)', lineHeight: '1.3' }}>
+                Use mock browser storage instead of the Express backend database. Helpful for static previews.
+              </span>
+            </div>
+          </div>
+
           <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '1.25rem', marginTop: '0.5rem' }}>
             <h4 style={{ margin: '0 0 0.5rem 0', color: '#ef4444', fontSize: '0.85rem', fontWeight: '600' }}>Danger Zone</h4>
             <button
@@ -1392,6 +1509,16 @@ export default function App() {
             localStorage.setItem('rawstream_backend_url', val);
           } else {
             localStorage.removeItem('rawstream_backend_url');
+          }
+        }}
+        isOfflineMode={isOfflineMode}
+        backendReachable={backendReachable}
+        onToggleOfflineMode={(val) => {
+          setIsOfflineMode(val);
+          if (val) {
+            localStorage.setItem('rawstream_offline_mode', 'true');
+          } else {
+            localStorage.removeItem('rawstream_offline_mode');
           }
         }}
       />

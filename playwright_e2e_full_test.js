@@ -326,6 +326,15 @@ async function runE2ETests() {
     }
     console.log('Seeking in Sintel torrent verified successfully!');
 
+    // Pause the video and keep currentTime at 10s to ensure subtitle cue remains active
+    await page.evaluate(() => {
+      const v = document.querySelector('video');
+      if (v) {
+        v.pause();
+        v.currentTime = 10;
+      }
+    });
+
     // Step 3c: Test custom subtitles timing
     console.log('Testing custom subtitles upload and timing...');
     const testSubsPath = path.join(projectRoot, 'test_subs.srt');
@@ -333,6 +342,8 @@ async function runE2ETests() {
 00:00:08,000 --> 00:00:15,000
 This is a subtitle at 10 seconds!`, 'utf8');
 
+    // Click subtitles button to open subtitles menu so file input is rendered
+    await page.click('button[title="Subtitles"]');
     await page.setInputFiles('#sub-upload-file', testSubsPath);
     console.log('Uploaded subtitles file test_subs.srt.');
     await page.waitForTimeout(2000); // wait for track loading and UI update
