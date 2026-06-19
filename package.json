@@ -1,7 +1,27 @@
 {
   "name": "rawstream",
-  "private": true,
   "version": "1.0.0",
+  "private": true,
+  "description": "A premium, glassmorphic cloud media player built with React & Vite. Stream videos directly from Google Drive, OneDrive, and BitTorrent magnet links/torrents with an Express/WebTorrent/FFmpeg transcoding backend.",
+  "homepage": "https://abhimshr08.github.io/Rawstream/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/abhimshr08/Rawstream.git"
+  },
+  "keywords": [
+    "react",
+    "vite",
+    "webtorrent",
+    "ffmpeg",
+    "transcoding",
+    "media-player",
+    "cloud-streaming",
+    "video-streaming",
+    "google-drive",
+    "onedrive"
+  ],
+  "author": "Abhishek Mishra <abhimshr08@gmail.com>",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite",
