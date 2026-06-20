@@ -155,7 +155,8 @@ export default function Player({
   onSyncProgress,
   onTorrentStats,          // Added callback for client-side stats
   torrentInfo,
-  apiBaseUrl = ''
+  apiBaseUrl = '',
+  disableFx = false
 }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -173,15 +174,23 @@ export default function Player({
   const [isTheater, setIsTheater] = useState(false);
   const [useEmbed, setUseEmbed] = useState(false);
   const [webtorrentLoaded, setWebtorrentLoaded] = useState(false);
-  // Default to P2P mode on static hosts (GitHub Pages, Netlify, Vercel, HF Spaces) where there is no reliable backend
-  // BUT if apiBaseUrl is configured, the user has a backend server — always use 'server' mode
+  const isTvBrowser = typeof navigator !== 'undefined' && (
+    /SmartTV|Tizen|WebOS|LG\sBrowser|LG\sTV|JioSphere|Jio\sSphere|JioPages|Jio\sPages|SamsungTV|SonyTV|AppleTV|Panasonic|Philips|Viera|Roku|Opera\sTV|NetCast|DuneHD|Vizio/i.test(navigator.userAgent)
+  );
+  
   const isStaticHost = typeof window !== 'undefined' && (
     window.location.hostname.endsWith('.github.io') ||
     window.location.hostname.endsWith('.netlify.app') ||
     window.location.hostname.endsWith('.vercel.app') ||
     window.location.hostname.endsWith('.pages.dev')
   );
-  const [torrentPlayerMode, setTorrentPlayerMode] = useState((isStaticHost && !apiBaseUrl) ? 'p2p' : 'server'); // 'server' or 'p2p'
+  
+  // Default to server mode on TVs to avoid OOM crashes from client WebTorrent execution.
+  // Otherwise, default to P2P mode on static hosts where there is no reliable backend.
+  const [torrentPlayerMode, setTorrentPlayerMode] = useState(() => {
+    if (isTvBrowser) return 'server';
+    return (isStaticHost && !apiBaseUrl) ? 'p2p' : 'server';
+  });
 
   const webtorrentClientRef = useRef(null);
   const webtorrentStatsIntervalRef = useRef(null);
@@ -531,6 +540,16 @@ export default function Player({
       // Don't fire shortcuts when focus is in a text input / editable element
       const tag = document.activeElement?.tagName?.toLowerCase();
       if (tag === 'input' || tag === 'textarea' || document.activeElement?.isContentEditable) return;
+
+      // Allow default TV remote D-pad focus navigation unless focus is in the player or it is fullscreen.
+      const isArrowKey = e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown';
+      if (isArrowKey) {
+        const isFocusInPlayer = playerRef.current?.contains(document.activeElement);
+        const isPlayerFullscreen = !!document.fullscreenElement;
+        if (!isFocusInPlayer && !isPlayerFullscreen) {
+          return;
+        }
+      }
 
       const video = videoRef.current;
 
@@ -1060,6 +1079,7 @@ export default function Player({
 
   // Fake Waveform Visualizer for Audio / Buffering State
   const drawWaveformVisualizer = () => {
+    if (disableFx) return;
     const canvas = visualizerRef.current;
     if (!canvas) return;
 
@@ -1118,8 +1138,10 @@ export default function Player({
     syncIntervalRef.current = setInterval(syncPlaybackProgress, 5000);
 
     // Ambient glow
-    if (ambientIntervalRef.current) clearInterval(ambientIntervalRef.current);
-    ambientIntervalRef.current = setInterval(updateAmbientGlow, 100);
+    if (!disableFx) {
+      if (ambientIntervalRef.current) clearInterval(ambientIntervalRef.current);
+      ambientIntervalRef.current = setInterval(updateAmbientGlow, 100);
+    }
   };
 
   const handlePause = () => {
@@ -1638,7 +1660,7 @@ export default function Player({
 
 
       {/* Ambient Canvas Glow */}
-      <canvas ref={canvasRef} id="ambient-glow-canvas" className="ambient-glow-canvas" />
+      {!disableFx && <canvas ref={canvasRef} id="ambient-glow-canvas" className="ambient-glow-canvas" />}
 
       {/* Loading Overlay */}
       {(isBuffering || playerLoading) && (
@@ -1656,7 +1678,17 @@ export default function Player({
       {/* Audio visualizer canvas */}
       {!showPlaceholder && (isBuffering || isAudioOnly) && (
         <div className="waveform-container">
-          <canvas ref={visualizerRef} className="waveform-visualizer" />
+          {disableFx ? (
+            <div className="waveform-fallback-pulse">
+              <div className="pulse-bar" />
+              <div className="pulse-bar" />
+              <div className="pulse-bar" />
+              <div className="pulse-bar" />
+              <div className="pulse-bar" />
+            </div>
+          ) : (
+            <canvas ref={visualizerRef} className="waveform-visualizer" />
+          )}
         </div>
       )}
 

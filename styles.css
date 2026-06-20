@@ -153,6 +153,11 @@ body {
   width: 100%;
   max-width: 1800px;
   margin: 0 auto;
+  transition: grid-template-columns 0.3s ease;
+}
+
+.main-layout.sidebar-collapsed {
+  grid-template-columns: 1fr 0px;
 }
 
 /* Left/Player Panel */
@@ -867,6 +872,11 @@ body {
   flex-direction: column;
   max-height: calc(100vh - 73px);
   overflow: hidden;
+  width: 340px;
+}
+
+.history-sidebar.collapsed {
+  display: none !important;
 }
 
 .sidebar-header {
@@ -2598,3 +2608,67 @@ body {
     padding: 1.5rem 1.25rem;
   }
 }
+
+/* ==========================================================================
+   TV Browser Navigation & GPU-friendly Fallback Styles
+   ========================================================================== */
+
+/* High-contrast focus outlines for D-pad/keyboard navigation */
+:focus-visible {
+  outline: 3px solid var(--accent-primary) !important;
+  outline-offset: 2px !important;
+  box-shadow: 0 0 15px rgba(99, 102, 241, 0.6) !important;
+}
+
+/* Specific input adjustments on focus */
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  border-color: var(--accent-primary) !important;
+}
+
+/* Focused history item visibility */
+.history-item:focus-visible {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border-color: var(--accent-primary) !important;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2), 0 0 12px rgba(99, 102, 241, 0.3) !important;
+  outline: none !important; /* Use border/shadow for history items to look premium */
+}
+
+/* Waveform Fallback Pulse (low CPU/GPU overhead animation for TVs) */
+.waveform-fallback-pulse {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 80px;
+  width: 100%;
+}
+
+.pulse-bar {
+  width: 4px;
+  height: 20px;
+  background: var(--accent-primary);
+  border-radius: 2px;
+  animation: pulseBar 1.2s infinite ease-in-out;
+}
+
+.pulse-bar:nth-child(1) { animation-delay: -1.0s; height: 35px; }
+.pulse-bar:nth-child(2) { animation-delay: -0.8s; height: 15px; }
+.pulse-bar:nth-child(3) { animation-delay: -0.6s; height: 40px; }
+.pulse-bar:nth-child(4) { animation-delay: -0.4s; height: 20px; }
+.pulse-bar:nth-child(5) { animation-delay: -0.2s; height: 30px; }
+
+@keyframes pulseBar {
+  0%, 100% {
+    transform: scaleY(0.4);
+    opacity: 0.5;
+  }
+  50% {
+    transform: scaleY(1.2);
+    opacity: 1;
+    background: var(--accent-secondary);
+  }
+}
+

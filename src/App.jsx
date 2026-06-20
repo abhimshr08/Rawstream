@@ -23,6 +23,9 @@ import {
 } from './utils/mockBackend';
 import { getTorrentInfoFromBuffer, parseMagnetUri } from './utils/torrentParser';
 
+const isTvBrowser = typeof navigator !== 'undefined' && (
+  /SmartTV|Tizen|WebOS|LG\sBrowser|LG\sTV|JioSphere|Jio\sSphere|JioPages|Jio\sPages|SamsungTV|SonyTV|AppleTV|Panasonic|Philips|Viera|Roku|Opera\sTV|NetCast|DuneHD|Vizio/i.test(navigator.userAgent)
+);
 
 export default function App() {
   // Authentication State
@@ -107,7 +110,16 @@ export default function App() {
   const [toasts, setToasts] = useState([]);
 
   // Layout State
-  const [showHistory, setShowHistory] = useState(true);
+  const [showHistory, setShowHistory] = useState(() => {
+    // Hide sidebar on TV browsers by default to maximize player space
+    if (isTvBrowser) return false;
+    return true;
+  });
+  const [disableFx, setDisableFx] = useState(() => {
+    const stored = localStorage.getItem('rawstream_disable_fx');
+    if (stored !== null) return stored === 'true';
+    return isTvBrowser; // Default to true on TV browsers, false on desktop
+  });
   const [showAdmin, setShowAdmin] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
@@ -1191,7 +1203,7 @@ export default function App() {
       </header>
 
       {/* Main Content Layout */}
-      <div className="main-layout">
+      <div className={`main-layout ${showHistory ? '' : 'sidebar-collapsed'}`}>
         <main className="player-panel">
           {/* Form parser card */}
           <section className={`input-card glass-panel ${dragOver ? 'drag-over' : ''}`}>
@@ -1266,6 +1278,7 @@ export default function App() {
             onTorrentStats={setTorrentStats}
             torrentInfo={activeTorrentInfo}
             apiBaseUrl={apiBaseUrl}
+            disableFx={disableFx}
           />
 
           {/* Torrent Files Explorer Drawer */}
@@ -1403,6 +1416,37 @@ export default function App() {
               <label htmlFor="settings-offline-mode" style={{ fontSize: '0.85rem', color: 'white', fontWeight: '500', cursor: 'pointer', margin: 0 }}>Offline Demo Mode</label>
               <span style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.4)', lineHeight: '1.3' }}>
                 Use mock browser storage instead of the Express backend database. Helpful for static previews.
+              </span>
+            </div>
+          </div>
+
+          <div className="auth-input-group" style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '0.75rem', background: 'rgba(255,255,255,0.02)', padding: '0.75rem', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <input
+              type="checkbox"
+              id="settings-disable-fx"
+              checked={disableFx}
+              onChange={(e) => {
+                const checked = e.target.checked;
+                setDisableFx(checked);
+                if (checked) {
+                  localStorage.setItem('rawstream_disable_fx', 'true');
+                  addToast('Visual effects disabled (TV mode active)', 'info');
+                } else {
+                  localStorage.setItem('rawstream_disable_fx', 'false');
+                  addToast('Visual effects enabled', 'info');
+                }
+              }}
+              style={{
+                cursor: 'pointer',
+                width: '16px',
+                height: '16px',
+                accentColor: 'var(--accent-primary)'
+              }}
+            />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+              <label htmlFor="settings-disable-fx" style={{ fontSize: '0.85rem', color: 'white', fontWeight: '500', cursor: 'pointer', margin: 0 }}>Disable Visual Effects (TV Mode)</label>
+              <span style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.4)', lineHeight: '1.3' }}>
+                Disables the ambient cinema glow and canvas waveform animations. Highly recommended for low-RAM devices and TV browsers.
               </span>
             </div>
           </div>

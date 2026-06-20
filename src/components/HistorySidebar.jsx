@@ -62,7 +62,14 @@ export default function HistorySidebar({
                 <li 
                   key={item.id} 
                   className={`history-item ${isActive ? 'active' : ''}`}
+                  tabIndex={0}
                   onClick={() => !isEditing && onLoadStream(item)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      if (!isEditing) onLoadStream(item);
+                    }
+                  }}
                 >
                   <div className="item-meta">
                     <span className={`item-service ${item.service || 'unknown'}`}>
