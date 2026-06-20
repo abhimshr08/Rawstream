@@ -14,7 +14,6 @@ pinned: false
 [![Sync to Hugging Face Hub](https://github.com/abhimshr08/Rawstream/actions/workflows/hf_sync.yml/badge.svg)](https://github.com/abhimshr08/Rawstream/actions/workflows/hf_sync.yml)
 [![React Version](https://img.shields.io/badge/React-19.2-blue.svg?logo=react)](https://react.dev/)
 [![Vite Version](https://img.shields.io/badge/Vite-5.0-6474f2.svg?logo=vite)](https://vite.dev/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 RawStream is a premium, glassmorphic React single-page web application that allows you to stream large video files directly from public Google Drive, Microsoft OneDrive, and BitTorrent magnet URIs/torrents.
 
@@ -119,9 +118,3 @@ Source cloud links must be shared publicly for RawStream to pull their streams.
 | <kbd>M</kbd> | Mute / Unmute audio |
 | <kbd>F</kbd> | Toggle Fullscreen |
 | <kbd>T</kbd> | Toggle Theater Mode |
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

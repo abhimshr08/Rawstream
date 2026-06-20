@@ -21,7 +21,7 @@
     "onedrive"
   ],
   "author": "Abhishek Mishra <abhimshr08@gmail.com>",
-  "license": "MIT",
+  "license": "UNLICENSED",
   "type": "module",
   "scripts": {
     "dev": "vite",
