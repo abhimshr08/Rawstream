@@ -20,4 +20,4 @@ test_subs.srt
 
 # Data directory (user data, sessions, transcode cache)
 data/
-scratch/transcode_cache/
+scratch/

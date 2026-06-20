@@ -1426,7 +1426,14 @@ app.get('/api/torrent/stream', async (req, res) => {
       );
 
       try {
-        torrent.deselect(0, torrent.pieces.length - 1, 1);
+        // Surgically deselect only the pieces outside the new lookahead window.
+        // This preserves currently in-progress piece downloads inside the overlapping lookahead region.
+        if (startPiece > 0) {
+          torrent.deselect(0, startPiece - 1, 1);
+        }
+        if (endPiece < torrent.pieces.length - 1) {
+          torrent.deselect(endPiece + 1, torrent.pieces.length - 1, 1);
+        }
         torrent.select(startPiece, endPiece, 1);
       } catch (err) {
         console.error('[TorrentStream] Failed to select lookahead range:', err.message);
