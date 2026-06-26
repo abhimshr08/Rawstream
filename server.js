@@ -1073,7 +1073,9 @@ app.get('/api/stream', async (req, res) => {
     } else if (targetQuality === '480p') {
       vopts = ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-vf', 'scale=-2:480', '-pix_fmt', 'yuv420p', '-b:v', '800k', '-maxrate', '1200k', '-bufsize', '1800k'];
     } else if (isTorrentStream) {
-      vopts = ['-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'film', '-crf', '23', '-pix_fmt', 'yuv420p'];
+      vopts = canCopyVideo
+        ? ['-c:v', 'copy']
+        : ['-c:v', 'libx264', '-preset', 'veryfast', '-profile:v', 'high', '-level:v', '4.1', '-crf', '23', '-pix_fmt', 'yuv420p'];
     } else {
       vopts = (canCopyVideo && (!isSeeking || canCopyAudio))
         ? ['-c:v', 'copy']

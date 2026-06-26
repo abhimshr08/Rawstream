@@ -945,7 +945,7 @@ export default function Player({
       } catch (e) {}
 
       const target = `/api/torrent/stream?infoHash=${encodeURIComponent(infoHash)}&fileIndex=${encodeURIComponent(fileIndex)}`;
-      newSrc = `/api/stream?url=${encodeURIComponent(target)}&transcode=true${qualityParam}&start=${seconds}`;
+      newSrc = `/api/stream?url=${encodeURIComponent(target)}&transcode=true&vcodec=${encodeURIComponent(vcodec)}&acodec=${encodeURIComponent(acodec)}${qualityParam}&start=${seconds}`;
     } else {
       newSrc = `/api/stream?url=${encodeURIComponent(rawUrl)}&transcode=true&vcodec=${encodeURIComponent(vcodec)}&acodec=${encodeURIComponent(acodec)}${qualityParam}&start=${seconds}`;
     }
@@ -1508,7 +1508,7 @@ export default function Player({
           } catch (e) {}
 
           const target = `/api/torrent/stream?infoHash=${encodeURIComponent(infoHash)}&fileIndex=${encodeURIComponent(fileIndex)}`;
-          initialSrc = `/api/stream?url=${encodeURIComponent(target)}&transcode=true${qualityParam}`;
+          initialSrc = `/api/stream?url=${encodeURIComponent(target)}&transcode=true&vcodec=${encodeURIComponent(vcodec)}&acodec=${encodeURIComponent(acodec)}${qualityParam}`;
         } else if (!isTorrent) {
           initialSrc = `/api/stream?url=${encodeURIComponent(extractedRawUrl)}&transcode=true&vcodec=${encodeURIComponent(vcodec)}&acodec=${encodeURIComponent(acodec)}${qualityParam}`;
         }
