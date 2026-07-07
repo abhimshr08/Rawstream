@@ -126,17 +126,21 @@ const DEFAULT_TRACKERS = [
   'http://tracker.files.fm:6969/announce',
   'https://tracker.gbitt.info/announce',
   'https://1337.abcvg.info/announce',
+  'https://tracker.lilithraws.org/announce',
   // UDP trackers (may be blocked in some cloud envs)
   'udp://tracker.openbittorrent.com:80/announce',
   'udp://tracker.opentrackr.org:1337/announce',
   'udp://tracker.torrent.eu.org:451/announce',
-  'udp://tracker.internetwarriors.net:1337/announce',
-  'udp://exodus.desync.com:6969/announce',
   'udp://open.stealth.si:80/announce',
+  'udp://exodus.desync.com:6969/announce',
   'udp://tracker.moeking.me:6969/announce',
+  'udp://open.demonii.com:1337/announce',
+  'udp://tracker.tiny-vps.com:6969/announce',
+  'udp://tracker.pirateparty.gr:6969/announce',
   // WebSocket trackers (WebTorrent compatible)
   'wss://tracker.openwebtorrent.com',
   'wss://tracker.btorrent.xyz',
+  'wss://tracker.fastcast.nz',
   'wss://tracker.files.fm'
 ];
 
@@ -1447,6 +1451,8 @@ app.get('/api/torrent/stream', async (req, res) => {
     // only the active range of pieces at maximum priority on-demand.
 
     res.setHeader('Accept-Ranges', 'bytes');
+    // Allow client-side Service Worker to cache byte-range responses for seek-back
+    res.setHeader('Cache-Control', 'private, max-age=300');
     const mimeTypes = {
       '.mp4': 'video/mp4',
       '.mkv': 'video/x-matroska',

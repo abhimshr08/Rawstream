@@ -21,6 +21,16 @@
 </head>
 <body>
   <div id="root"></div>
+  <script>
+    // Register the range-cache Service Worker for torrent stream byte caching
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw-range-cache.js', { scope: '/' })
+          .then((reg) => console.log('[SW] Range cache registered:', reg.scope))
+          .catch((err) => console.warn('[SW] Range cache registration failed:', err));
+      });
+    }
+  </script>
   <script type="module" src="/src/main.jsx"></script>
 </body>
 </html>

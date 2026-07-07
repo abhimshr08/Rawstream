@@ -34,7 +34,8 @@ export default function Controls({
   bufferPercent,
   torrentSubtitleOptions = [],
   torrentSubtitlesLoaded = false,
-  apiBaseUrl = ''
+  apiBaseUrl = '',
+  cachedRanges = []
 }) {
   // Volume state
   const [volume, setVolume] = useState(1);
@@ -500,11 +501,86 @@ export default function Controls({
   // Best available total duration for the time display: prefer probed mediaDuration, fallback to live video.duration
   const totalDuration = mediaDuration || (videoRef.current?.duration && isFinite(videoRef.current.duration) ? videoRef.current.duration : 0);
 
-  // Gradient fill inline styling
+  // Gradient fill inline styling with multi-segment cached range visualization
   const maxBuffered = Math.max(progressPercent, bufferPercent || 0);
-  const progressBgStyle = {
-    background: `linear-gradient(to right, var(--accent-primary) 0%, var(--accent-primary) ${progressPercent}%, rgba(255, 255, 255, 0.4) ${progressPercent}%, rgba(255, 255, 255, 0.4) ${maxBuffered}%, rgba(255, 255, 255, 0.2) ${maxBuffered}%, rgba(255, 255, 255, 0.2) 100%)`
+
+  // Build a gradient that shows: played (accent), browser buffer (white 40%), cached segments (white 25%), unbuffered (white 20%)
+  const buildProgressGradient = () => {
+    // If there are cached ranges from the Service Worker, render them as distinct segments
+    if (cachedRanges.length > 0) {
+      // Create gradient stops: played portion, then cached segments as brighter areas
+      const stops = [];
+      
+      // Played portion (accent color)
+      stops.push(`var(--accent-primary) 0%`);
+      stops.push(`var(--accent-primary) ${progressPercent}%`);
+      
+      // Build segment stops for the rest of the bar
+      // Collect all "bright" ranges: browser buffer + SW cached ranges
+      const brightRanges = [];
+      
+      // Browser buffer range (from current position to bufferPercent)
+      if (bufferPercent > progressPercent) {
+        brightRanges.push({ start: progressPercent, end: bufferPercent, opacity: 0.4 });
+      }
+      
+      // SW cached ranges (may be non-contiguous)
+      for (const range of cachedRanges) {
+        // Only show cached ranges that are beyond the played position
+        if (range.end > progressPercent) {
+          brightRanges.push({
+            start: Math.max(range.start, progressPercent),
+            end: range.end,
+            opacity: 0.35
+          });
+        }
+      }
+      
+      // Sort by start position
+      brightRanges.sort((a, b) => a.start - b.start);
+      
+      // Merge overlapping ranges, taking the max opacity
+      const merged = [];
+      for (const r of brightRanges) {
+        if (merged.length > 0 && r.start <= merged[merged.length - 1].end) {
+          const last = merged[merged.length - 1];
+          last.end = Math.max(last.end, r.end);
+          last.opacity = Math.max(last.opacity, r.opacity);
+        } else {
+          merged.push({ ...r });
+        }
+      }
+      
+      // Build gradient stops from merged ranges
+      let lastEnd = progressPercent;
+      for (const seg of merged) {
+        if (seg.start > lastEnd) {
+          // Gap between segments: dark
+          stops.push(`rgba(255, 255, 255, 0.15) ${lastEnd}%`);
+          stops.push(`rgba(255, 255, 255, 0.15) ${seg.start}%`);
+        }
+        // Cached/buffered segment: brighter
+        stops.push(`rgba(255, 255, 255, ${seg.opacity}) ${seg.start}%`);
+        stops.push(`rgba(255, 255, 255, ${seg.opacity}) ${seg.end}%`);
+        lastEnd = seg.end;
+      }
+      
+      // Fill rest of the bar
+      if (lastEnd < 100) {
+        stops.push(`rgba(255, 255, 255, 0.15) ${lastEnd}%`);
+        stops.push(`rgba(255, 255, 255, 0.15) 100%`);
+      }
+      
+      return { background: `linear-gradient(to right, ${stops.join(', ')})` };
+    }
+
+    // Default: simple 3-zone gradient (played, buffered, unbuffered)
+    return {
+      background: `linear-gradient(to right, var(--accent-primary) 0%, var(--accent-primary) ${progressPercent}%, rgba(255, 255, 255, 0.4) ${progressPercent}%, rgba(255, 255, 255, 0.4) ${maxBuffered}%, rgba(255, 255, 255, 0.2) ${maxBuffered}%, rgba(255, 255, 255, 0.2) 100%)`
+    };
   };
+
+  const progressBgStyle = buildProgressGradient();
 
   return (
     <div id="video-controls" className={`video-controls ${show ? '' : 'hidden-controls'}`} onClick={(e) => e.stopPropagation()}>

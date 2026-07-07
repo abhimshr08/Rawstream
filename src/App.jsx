@@ -729,26 +729,55 @@ export default function App() {
   };
 
   const DEFAULT_TRACKERS = [
+    // UDP trackers (widely used, actively maintained)
     'udp://tracker.openbittorrent.com:80/announce',
     'udp://tracker.opentrackr.org:1337/announce',
-    'udp://tracker.internetwarriors.net:1337/announce',
-    'udp://tracker.leechers-paradise.org:6969/announce',
-    'udp://tracker.coppersurfer.tk:6969/announce',
-    'udp://tracker.exodus.desync.com:6969/announce',
+    'udp://open.stealth.si:80/announce',
     'udp://tracker.torrent.eu.org:451/announce',
-    'udp://9.rarbg.to:2710/announce',
-    'wss://tracker.fastcast.nz',
+    'udp://exodus.desync.com:6969/announce',
+    'udp://tracker.moeking.me:6969/announce',
+    'udp://open.demonii.com:1337/announce',
+    'udp://tracker.tiny-vps.com:6969/announce',
+    'udp://tracker.pirateparty.gr:6969/announce',
+    // HTTP trackers (work in environments where UDP is blocked)
+    'http://tracker.opentrackr.org:1337/announce',
+    'http://tracker.openbittorrent.com:80/announce',
+    'https://tracker.gbitt.info/announce',
+    'https://tracker.lilithraws.org/announce',
+    // WebSocket trackers (required for browser WebTorrent P2P)
     'wss://tracker.openwebtorrent.com',
     'wss://tracker.btorrent.xyz',
-    'wss://tracker.webtorrent.io'
+    'wss://tracker.fastcast.nz',
+    'wss://tracker.files.fm'
   ];
 
   const augmentMagnetWithTrackers = (magnetUri) => {
     if (!magnetUri || !magnetUri.startsWith('magnet:?')) return magnetUri;
-    if (magnetUri.includes('wss://')) return magnetUri;
-    const separator = magnetUri.includes('?') ? '&' : '?';
-    const trackerParams = DEFAULT_TRACKERS.map(t => `tr=${encodeURIComponent(t)}`).join('&');
-    return `${magnetUri}${separator}${trackerParams}`;
+
+    // Always add missing working trackers, even if the magnet already contains some
+    const existingTrackers = new Set();
+    const trMatches = magnetUri.match(/tr=[^&]*/g) || [];
+    for (const match of trMatches) {
+      try {
+        const decoded = decodeURIComponent(match.slice(3)).toLowerCase();
+        existingTrackers.add(decoded);
+      } catch (e) {}
+    }
+
+    const addedTrackers = [];
+    for (const tracker of DEFAULT_TRACKERS) {
+      if (!existingTrackers.has(tracker.toLowerCase())) {
+        addedTrackers.push(tracker);
+      }
+    }
+
+    if (addedTrackers.length > 0) {
+      const separator = magnetUri.includes('&') || magnetUri.includes('?') ? '&' : '?';
+      const trackerParams = addedTrackers.map(t => `tr=${encodeURIComponent(t)}`).join('&');
+      return `${magnetUri}${separator}${trackerParams}`;
+    }
+
+    return magnetUri;
   };
 
   // Build torrent stream URL — direct by default, transcoded only when needed

@@ -168,6 +168,7 @@ export default function Player({
   const [isBuffering, setIsBuffering] = useState(false);
   const [loaderMessage, setLoaderMessage] = useState('');
   const [bufferPercent, setBufferPercent] = useState(0);
+  const [cachedRanges, setCachedRanges] = useState([]);
   const [showPlaceholder, setShowPlaceholder] = useState(true);
   const [videoError, setVideoError] = useState(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -201,7 +202,7 @@ export default function Player({
     'wss://tracker.openwebtorrent.com',
     'wss://tracker.fastcast.nz',
     'wss://tracker.btorrent.xyz',
-    'wss://tracker.webtorrent.io'
+    'wss://tracker.files.fm'
   ];
 
   const ensureWebTorrentTrackers = (magnetUri) => {
@@ -243,6 +244,39 @@ export default function Player({
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
     };
   }, []);
+
+  // Listen for Service Worker range-cache updates
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return;
+
+    const handleSwMessage = (event) => {
+      const { type, ranges, totalSize } = event.data || {};
+      if (type === 'RANGE_CACHE_UPDATE' && ranges) {
+        // Convert byte ranges to percentage ranges for the progress bar
+        if (totalSize && totalSize > 0) {
+          const percentRanges = ranges.map(r => ({
+            start: (r.start / totalSize) * 100,
+            end: (r.end / totalSize) * 100
+          }));
+          setCachedRanges(percentRanges);
+        }
+      }
+    };
+
+    navigator.serviceWorker.addEventListener('message', handleSwMessage);
+    return () => {
+      navigator.serviceWorker.removeEventListener('message', handleSwMessage);
+    };
+  }, []);
+
+  // Clear cached ranges when video changes
+  useEffect(() => {
+    setCachedRanges([]);
+    // Notify the Service Worker to clear cache for the old video
+    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+      navigator.serviceWorker.controller.postMessage({ type: 'CLEAR_CACHE' });
+    }
+  }, [currentVideo?.id]);
 
   // Global Keyboard Shortcuts — refs filled in after the functions are defined below
   const skipRef = useRef(null);
@@ -1993,6 +2027,7 @@ export default function Player({
           isTheater={isTheater}
           toggleTheater={toggleTheater}
           bufferPercent={bufferPercent}
+          cachedRanges={cachedRanges}
           apiBaseUrl={apiBaseUrl}
         />
       )}

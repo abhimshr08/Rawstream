@@ -17,10 +17,20 @@
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 
   <!-- Custom Styles -->
-  <script type="module" crossorigin src="./assets/index-DEPZmpFc.js"></script>
+  <script type="module" crossorigin src="./assets/index-CsNZGQg2.js"></script>
   <link rel="stylesheet" crossorigin href="./assets/index-aKOn-Par.css">
 </head>
 <body>
   <div id="root"></div>
+  <script>
+    // Register the range-cache Service Worker for torrent stream byte caching
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw-range-cache.js', { scope: '/' })
+          .then((reg) => console.log('[SW] Range cache registered:', reg.scope))
+          .catch((err) => console.warn('[SW] Range cache registration failed:', err));
+      });
+    }
+  </script>
 </body>
 </html>
