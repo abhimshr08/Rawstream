@@ -1338,7 +1338,8 @@ export default function Player({
   const handlePlayerTap = (e) => {
     // If a control button or dropdown was tapped, don't interfere
     if (e.target.closest('#video-controls') || e.target.closest('.dropdown-menu') || 
-        e.target.closest('.torrent-mode-selector') || e.target.closest('.resume-prompt')) {
+        e.target.closest('.torrent-mode-selector') || e.target.closest('.resume-prompt') ||
+        e.target.closest('#play-overlay')) {
       return;
     }
 
@@ -1575,8 +1576,16 @@ export default function Player({
         .then(() => logDebug('Playback autoplay initiated.'))
         .catch((err) => {
           logDebug(`Autoplay blocked: ${err.message}. Click play to start.`);
-          setIsBuffering(false); // clear spinner overlay so user can press play
-          clearTorrentWatchdog();
+          // For torrent streams during initial load, keep the buffering spinner
+          // visible — the retry loop in handleVideoError is handling recovery.
+          // Only clear for non-torrent streams where the user genuinely needs
+          // to click play (e.g. browser autoplay policy).
+          if (isTorrent && initialRetryCountRef.current < 5) {
+            logDebug('[Player] Keeping buffering spinner for torrent initial load retry.');
+          } else {
+            setIsBuffering(false);
+            clearTorrentWatchdog();
+          }
         });
     }
 
@@ -1986,7 +1995,7 @@ export default function Player({
 
       {/* Play Overlay Screen Button */}
       {!isPlaying && !showPlaceholder && !videoError && !isBuffering && !useEmbed && (!isTorrent || torrentPlayerMode === 'p2p' || torrentPlayerMode === 'server') && (
-        <div id="play-overlay" className="play-overlay" onClick={togglePlay}>
+        <div id="play-overlay" className="play-overlay" onClick={(e) => { e.stopPropagation(); togglePlay(); }}>
           <button className="large-play-btn" aria-label="Play">
             <svg viewBox="0 0 24 24" fill="currentColor">
               <polygon points="6 4 20 12 6 20 6 4" />
