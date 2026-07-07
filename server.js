@@ -615,6 +615,13 @@ class GrowingFileReader extends Readable {
           } else {
             this.readListener = checkAndRead;
             this.activeTranscode.once('write', this.readListener);
+
+            // Double check to avoid race condition where data was written while fs.read was running
+            if (this.readOffset < this.activeTranscode.bytesWritten) {
+              this.activeTranscode.removeListener('write', this.readListener);
+              this.readListener = null;
+              process.nextTick(checkAndRead);
+            }
           }
         });
       } else {
@@ -625,6 +632,13 @@ class GrowingFileReader extends Readable {
         } else {
           this.readListener = checkAndRead;
           this.activeTranscode.once('write', this.readListener);
+
+          // Double check to avoid race condition where data was written after checking 'limit'
+          if (this.readOffset < this.activeTranscode.bytesWritten) {
+            this.activeTranscode.removeListener('write', this.readListener);
+            this.readListener = null;
+            process.nextTick(checkAndRead);
+          }
         }
       }
     };
