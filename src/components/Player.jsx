@@ -879,8 +879,9 @@ export default function Player({
     const video = videoRef.current;
     if (!video || showPlaceholder) return;
     if (video.paused) {
-      video.play().catch(() => {
-        addToast('Play blocked. Check connection/sharing.', 'error');
+      video.play().catch((err) => {
+        logDebug(`[Play Error] play() failed: ${err.name} - ${err.message}`);
+        addToast(`Play blocked: ${err.message || 'Check connection/sharing.'}`, 'error');
       });
     } else {
       video.pause();
@@ -1336,6 +1337,19 @@ export default function Player({
 
   // Touch tap handler: first tap shows/hides controls, double-tap plays/pauses
   const handlePlayerTap = (e) => {
+    // If the clicked element was detached/unmounted during the click lifecycle (e.g. play overlay unmounting), ignore it
+    if (!document.body.contains(e.target)) {
+      return;
+    }
+
+    // Class name check for unmounted/detached elements that were part of play-overlay
+    if (e.target.className && typeof e.target.className === 'string' && (
+      e.target.className.includes('play-overlay') || 
+      e.target.className.includes('large-play-btn')
+    )) {
+      return;
+    }
+
     // If a control button or dropdown was tapped, don't interfere
     if (e.target.closest('#video-controls') || e.target.closest('.dropdown-menu') || 
         e.target.closest('.torrent-mode-selector') || e.target.closest('.resume-prompt') ||
