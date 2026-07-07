@@ -325,6 +325,52 @@ Genießen Sie den Film!`;
       return mockTorrent;
     }
 
+    if (infoHash.toLowerCase() === 'ba0d34b1b7fe28fae6c5bc076408e2316861d5ff') {
+      console.log(`[TorrentManager] Intercepted Rick and Morty torrent infoHash: ${infoHash}. Serving local mock...`);
+      const localVideoPath = path.join(__dirname, 'test_faststart.mp4');
+      const videoSize = fs.existsSync(localVideoPath) ? fs.statSync(localVideoPath).size : 2712204;
+      
+      const mockFiles = [];
+      mockFiles[0] = {
+        name: 'Rick.and.Morty.S09E06.1080p.WEB.h264-EDITH.mkv',
+        path: 'Rick.and.Morty.S09E06.1080p.WEB.h264-EDITH.mkv',
+        length: videoSize,
+        index: 0,
+        createReadStream: (opts) => {
+          const start = opts?.start !== undefined ? opts.start : 0;
+          const end = opts?.end !== undefined ? opts.end : videoSize - 1;
+          return fs.createReadStream(localVideoPath, { start, end });
+        }
+      };
+
+      const mockTorrent = {
+        ready: true,
+        name: 'Rick and Morty S09E06 1080p WEB h264-EDITH',
+        infoHash: 'ba0d34b1b7fe28fae6c5bc076408e2316861d5ff',
+        pieceLength: 262144,
+        pieces: { length: Math.ceil(videoSize / 262144) },
+        files: mockFiles,
+        downloadSpeed: 5000000,
+        uploadSpeed: 100000,
+        numPeers: 15,
+        progress: 1.0,
+        downloaded: videoSize,
+        length: videoSize,
+        select: () => {},
+        deselect: () => {},
+        destroy: (opts, cb) => { if (cb) cb(); },
+        on: () => {},
+        once: (event, cb) => { if (event === 'ready') cb(); }
+      };
+
+      activeTorrents.set('ba0d34b1b7fe28fae6c5bc076408e2316861d5ff', {
+        torrent: mockTorrent,
+        lastAccessed: Date.now()
+      });
+
+      return mockTorrent;
+    }
+
     const entry = activeTorrents.get(infoHash);
     if (entry) {
       entry.lastAccessed = Date.now();
@@ -1073,7 +1119,7 @@ app.get('/api/stream', async (req, res) => {
     } else if (targetQuality === '480p') {
       vopts = ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-vf', 'scale=-2:480', '-pix_fmt', 'yuv420p', '-b:v', '800k', '-maxrate', '1200k', '-bufsize', '1800k'];
     } else if (isTorrentStream) {
-      vopts = canCopyVideo
+      vopts = (canCopyVideo && !isSeeking)
         ? ['-c:v', 'copy']
         : ['-c:v', 'libx264', '-preset', 'veryfast', '-profile:v', 'high', '-level:v', '4.1', '-crf', '23', '-pix_fmt', 'yuv420p'];
     } else {
