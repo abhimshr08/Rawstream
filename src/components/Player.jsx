@@ -1585,25 +1585,38 @@ export default function Player({
 
       checkForResumeProgress(currentVideo.id);
 
-      logDebug('[Player useEffect] Invoking video.play()...');
-      video.play()
-        .then(() => logDebug('Playback autoplay initiated.'))
-        .catch((err) => {
-          logDebug(`Autoplay blocked: ${err.message}. Click play to start.`);
-          // For torrent streams during initial load, keep the buffering spinner
-          // visible — the retry loop in handleVideoError is handling recovery.
-          // Only clear for non-torrent streams where the user genuinely needs
-          // to click play (e.g. browser autoplay policy).
-          if (isTorrent && initialRetryCountRef.current < 5) {
-            logDebug('[Player] Keeping buffering spinner for torrent initial load retry.');
-          } else {
-            setIsBuffering(false);
-            clearTorrentWatchdog();
-          }
-        });
+      // Wait for canplay before calling play() to avoid the
+      // "play() interrupted by pause()" DOMException that occurs when play()
+      // is called synchronously right after load() while the browser is still
+      // resetting its internal media pipeline.
+      logDebug('[Player useEffect] Waiting for canplay before invoking video.play()...');
+      let playAttemptCancelled = false;
+      const onCanPlay = () => {
+        if (playAttemptCancelled) return;
+        logDebug('[Player useEffect] canplay fired — invoking video.play()...');
+        video.play()
+          .then(() => logDebug('Playback autoplay initiated.'))
+          .catch((err) => {
+            logDebug(`Autoplay blocked: ${err.message}. Click play to start.`);
+            // For torrent streams during initial load, keep the buffering spinner
+            // visible — the retry loop in handleVideoError is handling recovery.
+            // Only clear for non-torrent streams where the user genuinely needs
+            // to click play (e.g. browser autoplay policy).
+            if (isTorrent && initialRetryCountRef.current < 5) {
+              logDebug('[Player] Keeping buffering spinner for torrent initial load retry.');
+            } else {
+              setIsBuffering(false);
+              clearTorrentWatchdog();
+            }
+          });
+      };
+      video.addEventListener('canplay', onCanPlay, { once: true });
     }
 
     return () => {
+      // Cancel any pending canplay-triggered play() call
+      playAttemptCancelled = true;
+      video.removeEventListener('canplay', onCanPlay);
       void syncPlaybackProgress();
       video.removeAttribute('src');
       video.load();

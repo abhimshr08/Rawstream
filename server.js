@@ -1560,6 +1560,10 @@ app.get('/api/torrent/stream', async (req, res) => {
 const DATA_DIR = path.join(process.cwd(), 'data');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const HISTORY_FILE = path.join(DATA_DIR, 'history.json');
+const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
+
+// Sessions persist for 30 days after login (regardless of activity)
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -1570,8 +1574,66 @@ if (!fs.existsSync(USERS_FILE)) {
 if (!fs.existsSync(HISTORY_FILE)) {
   fs.writeFileSync(HISTORY_FILE, JSON.stringify({}));
 }
+if (!fs.existsSync(SESSIONS_FILE)) {
+  fs.writeFileSync(SESSIONS_FILE, JSON.stringify({}));
+}
 
+// Session persistence helpers
+function loadPersistedSessions() {
+  try {
+    return JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf8'));
+  } catch (e) {
+    return {};
+  }
+}
+
+function saveSessions() {
+  try {
+    const obj = {};
+    for (const [token, session] of activeSessions.entries()) {
+      obj[token] = session;
+    }
+    fs.writeFileSync(SESSIONS_FILE, JSON.stringify(obj, null, 2));
+  } catch (e) {
+    console.error('[Sessions] Failed to persist sessions:', e.message);
+  }
+}
+
+function evictExpiredSessions() {
+  const now = Date.now();
+  let evicted = 0;
+  for (const [token, session] of activeSessions.entries()) {
+    if (now - session.loginTime > SESSION_TTL_MS) {
+      activeSessions.delete(token);
+      evicted++;
+    }
+  }
+  if (evicted > 0) {
+    console.log(`[Sessions] Evicted ${evicted} expired session(s).`);
+    saveSessions();
+  }
+}
+
+// Boot: restore sessions from disk, evicting any that are already expired
 const activeSessions = new Map(); // key: sessionToken, value: { username, isAdmin, loginTime }
+{
+  const persisted = loadPersistedSessions();
+  const now = Date.now();
+  let loaded = 0;
+  for (const [token, session] of Object.entries(persisted)) {
+    if (now - session.loginTime <= SESSION_TTL_MS) {
+      activeSessions.set(token, session);
+      loaded++;
+    }
+  }
+  if (loaded > 0) {
+    console.log(`[Sessions] Restored ${loaded} active session(s) from disk.`);
+  }
+}
+
+// Evict expired sessions once a day
+setInterval(evictExpiredSessions, 24 * 60 * 60 * 1000);
+
 if (process.env.NODE_ENV === 'test') {
   activeSessions.set('devtoken', {
     username: 'tester',
@@ -1725,6 +1787,7 @@ app.post('/api/auth/register', async (req, res) => {
       isAdmin: false,
       loginTime: Date.now()
     });
+    saveSessions();
 
     res.json({ success: true, token, username: cleanUsername, isAdmin: false });
   } catch (err) {
@@ -1759,6 +1822,7 @@ app.post('/api/auth/login', async (req, res) => {
       isAdmin: !!user.isAdmin,
       loginTime: Date.now()
     });
+    saveSessions();
 
     res.json({ success: true, token, username: user.username, isAdmin: !!user.isAdmin });
   } catch (err) {
@@ -1773,6 +1837,7 @@ app.post('/api/auth/logout', (req, res) => {
   const token = authHeader && authHeader.split(' ')[1];
   if (token) {
     activeSessions.delete(token);
+    saveSessions();
   }
   res.json({ success: true });
 });
@@ -1936,6 +2001,7 @@ app.delete('/api/admin/users/:username', (req, res) => {
       activeSessions.delete(token);
     }
   }
+  saveSessions();
 
   res.json({ success: true, message: `User ${targetUser} deleted successfully` });
 });
