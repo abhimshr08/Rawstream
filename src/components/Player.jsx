@@ -1589,19 +1589,21 @@ export default function Player({
       // "play() interrupted by pause()" DOMException that occurs when play()
       // is called synchronously right after load() while the browser is still
       // resetting its internal media pipeline.
-      logDebug('[Player useEffect] Waiting for canplay before invoking video.play()...');
+      logDebug('[Player useEffect] Preparing autoplay invocation...');
       let playAttemptCancelled = false;
-      const onCanPlay = () => {
+      let playTimerId = null;
+
+      const attemptPlay = () => {
         if (playAttemptCancelled) return;
-        logDebug('[Player useEffect] canplay fired — invoking video.play()...');
+        if (playTimerId) {
+          clearTimeout(playTimerId);
+          playTimerId = null;
+        }
+        logDebug('[Player useEffect] Invoking video.play()...');
         video.play()
           .then(() => logDebug('Playback autoplay initiated.'))
           .catch((err) => {
             logDebug(`Autoplay blocked: ${err.message}. Click play to start.`);
-            // For torrent streams during initial load, keep the buffering spinner
-            // visible — the retry loop in handleVideoError is handling recovery.
-            // Only clear for non-torrent streams where the user genuinely needs
-            // to click play (e.g. browser autoplay policy).
             if (isTorrent && initialRetryCountRef.current < 5) {
               logDebug('[Player] Keeping buffering spinner for torrent initial load retry.');
             } else {
@@ -1610,13 +1612,30 @@ export default function Player({
             }
           });
       };
-      video.addEventListener('canplay', onCanPlay, { once: true });
+
+      if (video.readyState >= 2) {
+        logDebug('[Player useEffect] Media readyState >= 2 already — triggering play immediately.');
+        attemptPlay();
+      } else {
+        logDebug('[Player useEffect] Waiting for canplay event...');
+        const onCanPlay = () => {
+          video.removeEventListener('canplay', onCanPlay);
+          attemptPlay();
+        };
+        video.addEventListener('canplay', onCanPlay, { once: true });
+        // Fallback: if canplay doesn't fire within 2.5 seconds, attempt play() anyway
+        playTimerId = setTimeout(() => {
+          logDebug('[Player useEffect] canplay timeout reached — fallback triggering play().');
+          video.removeEventListener('canplay', onCanPlay);
+          attemptPlay();
+        }, 2500);
+      }
     }
 
     return () => {
       // Cancel any pending canplay-triggered play() call
       playAttemptCancelled = true;
-      video.removeEventListener('canplay', onCanPlay);
+      if (playTimerId) clearTimeout(playTimerId);
       void syncPlaybackProgress();
       video.removeAttribute('src');
       video.load();

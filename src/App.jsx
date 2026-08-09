@@ -183,10 +183,44 @@ export default function App() {
     console.log(`[Debug] ${msg}`);
   };
 
-  const clearUserScopedState = () => {
+  const loadLocalHistory = (username) => {
+    try {
+      const key = `rawstream_local_history_${username || 'guest'}`;
+      const stored = localStorage.getItem(key);
+      return stored ? JSON.parse(stored) : [];
+    } catch (e) {
+      return [];
+    }
+  };
+
+  const saveLocalHistory = (username, list) => {
+    try {
+      const key = `rawstream_local_history_${username || 'guest'}`;
+      localStorage.setItem(key, JSON.stringify(list || []));
+    } catch (e) {}
+  };
+
+  const mergeHistories = (primary, fallback) => {
+    const map = new Map();
+    (fallback || []).forEach(item => {
+      if (item && item.id) map.set(item.id, item);
+    });
+    (primary || []).forEach(item => {
+      if (item && item.id) {
+        const existing = map.get(item.id);
+        if (!existing || (item.updatedAt || 0) >= (existing.updatedAt || 0)) {
+          map.set(item.id, item);
+        }
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  };
+
+  const clearUserScopedState = (clearVideo = true) => {
     clearTorrentPolling();
-    setHistoryList([]);
-    setCurrentVideo(null);
+    if (clearVideo) {
+      setCurrentVideo(null);
+    }
     setTorrentStats(null);
     setActiveTorrentInfo(null);
     setStreamUrlInput('');
@@ -208,7 +242,7 @@ export default function App() {
   const handleSetSession = (username, token, isAdmin) => {
     const nextSession = { username, token, isAdmin };
     sessionRef.current = nextSession;
-    clearUserScopedState();
+    clearUserScopedState(true);
     setSession(nextSession);
     localStorage.setItem('rawstream_session_username', username);
     localStorage.setItem('rawstream_session_token', token);
@@ -217,13 +251,13 @@ export default function App() {
     addToast('Welcome back!', 'success');
   };
 
-  const handleClearSession = (skipBackendLogout = false) => {
+  const handleClearSession = (skipBackendLogout = false, clearVideo = true) => {
     if (session.token && !skipBackendLogout && !session.token.startsWith('mock-token-')) {
       const headers = { 'Authorization': `Bearer ${session.token}` };
       fetch(`${apiBaseUrl}/api/auth/logout`, { method: 'POST', headers }).catch(err => console.error('Logout error:', err));
     }
     sessionRef.current = { username: null, token: null, isAdmin: false };
-    clearUserScopedState();
+    clearUserScopedState(clearVideo);
     setSession({ username: null, token: null, isAdmin: false });
     localStorage.removeItem('rawstream_session_username');
     localStorage.removeItem('rawstream_session_token');
@@ -235,7 +269,7 @@ export default function App() {
   const handleUnauthorized = () => {
     const current = sessionRef.current;
     if (current?.token && !current.token.startsWith('mock-token-')) {
-      handleClearSession(true);
+      handleClearSession(true, false); // Keep current video stream active during background 401
       addToast('Session expired. Please sign in again.', 'warning');
     }
   };
@@ -287,14 +321,19 @@ export default function App() {
   };
 
   const syncHistoryFromBackend = async (targetSession = sessionRef.current) => {
+    const uname = targetSession?.username || 'guest';
+    const local = loadLocalHistory(uname);
+
     if (!targetSession?.token || !targetSession?.username) {
-      setHistoryList([]);
+      setHistoryList(local);
       return;
     }
 
     if (isOfflineMode || targetSession.token.startsWith('mock-token-')) {
-      const data = mockGetHistory(targetSession.username);
-      setHistoryList(data);
+      const mockData = mockGetHistory(targetSession.username);
+      const merged = mergeHistories(mockData, local);
+      saveLocalHistory(targetSession.username, merged);
+      setHistoryList(merged);
       return;
     }
 
@@ -307,23 +346,23 @@ export default function App() {
       if (res.ok) {
         const contentType = res.headers.get('content-type');
         if (contentType && contentType.includes('application/json')) {
-          const data = await res.json();
+          const backendData = await res.json();
           if (!isActiveSession(targetSession)) return;
-          setHistoryList(data);
+          const merged = mergeHistories(backendData, local);
+          saveLocalHistory(targetSession.username, merged);
+          setHistoryList(merged);
         } else {
-          addToast('Invalid server response format', 'error');
+          setHistoryList(local);
         }
       } else {
-        if (res.status === 401) {
-          handleUnauthorized();
-        } else {
-          addToast('Failed to sync history from server', 'error');
-        }
+        const merged = mergeHistories(mockGetHistory(targetSession.username), local);
+        saveLocalHistory(targetSession.username, merged);
+        setHistoryList(merged);
       }
     } catch (e) {
       console.error('Failed to sync history:', e);
       if (!isActiveSession(targetSession)) return;
-      addToast('Connection error: Failed to sync history', 'error');
+      setHistoryList(local);
     }
   };
 
@@ -355,13 +394,20 @@ export default function App() {
   }, [apiBaseUrl]);
 
   useEffect(() => {
+    const uname = session.username || 'guest';
+    const local = loadLocalHistory(uname);
+    setHistoryList(local);
     if (session.username && session.token) {
-      setHistoryList([]);
       syncHistoryFromBackend(session);
-    } else {
-      setHistoryList([]);
     }
   }, [session.username, session.token]);
+
+  useEffect(() => {
+    const uname = session.username || 'guest';
+    if (historyList && historyList.length > 0) {
+      saveLocalHistory(uname, historyList);
+    }
+  }, [historyList, session.username]);
 
   // History Actions
   const addToHistory = async (videoObj) => {
@@ -431,8 +477,16 @@ export default function App() {
 
   const clearAllHistory = async () => {
     if (window.confirm('Are you sure you want to clear your entire streaming history?')) {
+      const uname = session.username || 'guest';
+      try {
+        localStorage.removeItem(`rawstream_local_history_${uname}`);
+      } catch (e) {}
+
       const targetSession = session;
-      if (!targetSession?.token) return;
+      if (!targetSession?.token) {
+        setHistoryList([]);
+        return;
+      }
 
       if (isOfflineMode || targetSession.token.startsWith('mock-token-')) {
         const data = mockClearHistory(targetSession.username);
@@ -452,13 +506,15 @@ export default function App() {
           setHistoryList(data);
           addToast('History cleared', 'info');
         } else {
+          setHistoryList([]);
           if (res.status !== 401) {
-            addToast('Failed to clear history', 'error');
+            addToast('Failed to clear server history', 'error');
           }
         }
       } catch (e) {
         console.error('Failed to clear history:', e);
-        addToast('Connection error: Failed to clear history', 'error');
+        setHistoryList([]);
+        addToast('History cleared locally', 'info');
       }
     }
   };
