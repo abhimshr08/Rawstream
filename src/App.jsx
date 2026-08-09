@@ -90,18 +90,6 @@ export default function App() {
     pingBackend();
   }, [apiBaseUrl, isOfflineMode]);
 
-  // Keepalive: ping the backend every 90 s while a video is playing so that
-  // free-tier HF Spaces (which sleep after ~2 min of inactivity) do not go
-  // dormant mid-stream and return transient errors that break the session.
-  useEffect(() => {
-    if (!currentVideo || isOfflineMode || !apiBaseUrl) return;
-    const keepAlive = () => {
-      fetch(`${apiBaseUrl}/api/config`, { method: 'GET' }).catch(() => {/* silent */});
-    };
-    const id = setInterval(keepAlive, 90000); // 90 seconds
-    return () => clearInterval(id);
-  }, [currentVideo, isOfflineMode, apiBaseUrl]);
-
   // Google OAuth (for quota-exceeded Drive files)
   const googleAuth = useGoogleAuth(apiBaseUrl);
 
@@ -160,6 +148,18 @@ export default function App() {
 
   // References
   const debugLogsEndRef = useRef(null);
+
+  // Keepalive: ping the backend every 90 s while a video is active so that
+  // free-tier HF Spaces (which sleep after ~2 min of inactivity) do not go
+  // dormant mid-stream and return transient errors that break the session.
+  useEffect(() => {
+    if (!currentVideo || isOfflineMode || !apiBaseUrl) return;
+    const keepAlive = () => {
+      fetch(`${apiBaseUrl}/api/config`, { method: 'GET' }).catch(() => {/* silent */});
+    };
+    const id = setInterval(keepAlive, 90000); // 90 seconds
+    return () => clearInterval(id);
+  }, [currentVideo, isOfflineMode, apiBaseUrl]);
 
   useEffect(() => {
     sessionRef.current = session;
