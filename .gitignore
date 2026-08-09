@@ -1,0 +1,23 @@
+node_modules/
+dist/
+.env
+.env.*
+*.log
+
+# Test artifacts & binaries
+e2e_error.html
+dom.html
+hf_space_e2e.html
+hf_space_e2e_results.json
+headless_*.html
+test_subs.srt
+*.png
+*.webp
+*.jpg
+*.jpeg
+*.mp4
+*.pdf
+
+# Data directory (user data, sessions, transcode cache)
+data/
+scratch/

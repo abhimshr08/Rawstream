@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>RawStream - Stream Anything, From Anywhere</title>
+  <meta name="description" content="Stream large videos directly from Google Drive, OneDrive, or torrents with RawStream — a powerful, no-limits cloud media player.">
+  <meta name="referrer" content="no-referrer">
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+  
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  
+  <!-- Google Identity Services (for Drive OAuth token) -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+
+  <!-- Custom Styles -->
+  <script type="module" crossorigin src="./assets/index-vKpwKkT6.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-aKOn-Par.css">
+</head>
+<body>
+  <div id="root"></div>
+  <script>
+    // Register the range-cache Service Worker for torrent stream byte caching
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw-range-cache.js', { scope: '/' })
+          .then((reg) => console.log('[SW] Range cache registered:', reg.scope))
+          .catch((err) => console.warn('[SW] Range cache registration failed:', err));
+      });
+    }
+  </script>
+</body>
+</html>

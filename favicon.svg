@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <defs>
+    <!-- Define a neon cyan glow -->
+    <filter id="glow-cyan" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="3" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+    
+    <!-- Define a neon indigo/purple glow -->
+    <filter id="glow-indigo" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="4" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+
+    <!-- Linear gradient for the play button -->
+    <linearGradient id="neon-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366f1" /> <!-- Indigo -->
+      <stop offset="100%" stop-color="#06b6d4" /> <!-- Cyan -->
+    </linearGradient>
+  </defs>
+
+  <!-- Outer glowing circle -->
+  <circle cx="50" cy="50" r="40" fill="none" stroke="url(#neon-grad)" stroke-width="6" filter="url(#glow-cyan)" opacity="0.9" />
+
+  <!-- Inner play button triangle with rounded corners -->
+  <path d="M 42 32 
+           C 40 31, 38 32, 38 34 
+           L 38 66 
+           C 38 68, 40 69, 42 68 
+           L 68 52 
+           C 70 51, 70 49, 68 48 
+           Z" 
+        fill="url(#neon-grad)" 
+        filter="url(#glow-indigo)" />
+</svg>

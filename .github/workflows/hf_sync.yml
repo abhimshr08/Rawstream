@@ -1,0 +1,38 @@
+name: Sync to Hugging Face Hub
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  sync-to-hub:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          lfs: false
+
+      - name: Push to Hugging Face (clean orphan)
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name "GitHub Actions"
+          
+          # Create a fresh orphan branch with only current files (no binary history)
+          git checkout --orphan hf-deploy
+          git add -A
+          
+          # Remove any accidentally staged binary blobs
+          git rm --cached -r node_modules 2>/dev/null || true
+          git rm --cached -r dist 2>/dev/null || true
+          # Remove any binary files matching extensions to prevent Hugging Face Space push rejection
+          find . -type f -regex '.*\.\(png\|jpg\|jpeg\|webp\|pdf\|mp4\|mov\|zip\|tar\|gz\|mp3\|wav\|ogg\|exe\|bin\|dll\|so\|dylib\)' -exec git rm --cached {} + 2>/dev/null || true
+          
+          git commit -m "deploy: sync to Hugging Face Spaces"
+          
+          # Force push this clean single-commit branch as main to HF
+          git push --force https://Maverick9876:$HF_TOKEN@huggingface.co/spaces/Maverick9876/Rawstream hf-deploy:main
