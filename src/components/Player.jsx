@@ -1293,6 +1293,32 @@ export default function Player({
     const proxiedUrl = video.src;
     logDebug(`Video loading failed. URL: ${proxiedUrl}`);
 
+    // Generic Mid-Playback Auto Recovery for HTTP/Transcode Streams
+    if (!isNaN(displayTime) && displayTime > 2 && recoveryAttemptsRef.current < 3) {
+      recoveryAttemptsRef.current += 1;
+      const retryPos = displayTime;
+      logDebug(`[Recovery] Mid-stream video error at ${formatTime(retryPos)}. Attempting transparent auto-recovery ${recoveryAttemptsRef.current}/3...`);
+      setIsBuffering(true);
+      setLoaderMessage(`Reconnecting stream... (attempt ${recoveryAttemptsRef.current}/3)`);
+
+      if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
+      seekTimeoutRef.current = setTimeout(() => {
+        const v = videoRef.current;
+        if (v && currentVideo) {
+          logDebug(`[Recovery] Reloading video source at ${formatTime(retryPos)}...`);
+          v.load();
+          v.currentTime = retryPos;
+          v.play().then(() => {
+            logDebug('[Recovery] Mid-stream auto-recovery successful!');
+            setIsBuffering(false);
+          }).catch(err => {
+            logDebug(`[Recovery] Auto-recovery play blocked: ${err.message}`);
+          });
+        }
+      }, 1500);
+      return;
+    }
+
     // If we are playing an authenticated stream or standard Google Drive stream
     if (proxiedUrl && (proxiedUrl.includes('googleapis.com/drive') || proxiedUrl.includes('/api/gdrive-auth-stream'))) {
       if (googleAuth) googleAuth.clearToken();
@@ -1310,8 +1336,8 @@ export default function Player({
       return;
     }
 
-    setVideoError({ type: 'generic', message: 'Playback failed. Ensure file permissions are public.' });
-    addToast('Playback failed.', 'error');
+    setVideoError({ type: 'generic', message: 'Playback stalled or failed to load. Click play or refresh stream to retry.' });
+    addToast('Playback error. Reconnecting stream...', 'warning');
   };
 
   // Detect touch device

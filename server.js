@@ -1255,7 +1255,10 @@ app.get('/api/stream', async (req, res) => {
       reader.destroy();
 
       if (active.clientsCount <= 0) {
-        const timeoutMs = active.isTorrent ? 180000 : 15000; // 3 minutes for torrent streams, 15 seconds for others
+        // Keep active transcode sessions alive for 30 minutes so that HTML5 video
+        // pre-buffering (which closes TCP connections while playing out of buffer)
+        // does not cause session destruction mid-stream.
+        const timeoutMs = 30 * 60 * 1000; // 30 minutes for all active streams
         console.log(`[TranscodeCache] No active clients. Starting ${timeoutMs / 1000}s idle timeout for cacheKey: ${cacheKey}`);
         active.idleTimeout = setTimeout(() => {
           console.log(`[TranscodeCache] Idle timeout triggered. Cleaning up cacheKey: ${cacheKey}`);
