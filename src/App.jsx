@@ -90,6 +90,18 @@ export default function App() {
     pingBackend();
   }, [apiBaseUrl, isOfflineMode]);
 
+  // Keepalive: ping the backend every 90 s while a video is playing so that
+  // free-tier HF Spaces (which sleep after ~2 min of inactivity) do not go
+  // dormant mid-stream and return transient errors that break the session.
+  useEffect(() => {
+    if (!currentVideo || isOfflineMode || !apiBaseUrl) return;
+    const keepAlive = () => {
+      fetch(`${apiBaseUrl}/api/config`, { method: 'GET' }).catch(() => {/* silent */});
+    };
+    const id = setInterval(keepAlive, 90000); // 90 seconds
+    return () => clearInterval(id);
+  }, [currentVideo, isOfflineMode, apiBaseUrl]);
+
   // Google OAuth (for quota-exceeded Drive files)
   const googleAuth = useGoogleAuth(apiBaseUrl);
 
@@ -502,9 +514,16 @@ export default function App() {
     }
 
     try {
-      const res = await sessionFetch(targetSession, `/api/history/${encodeURIComponent(id)}`, {
+      // Use a plain fetch (not sessionFetch) so that transient 401s from a
+      // sleeping/rebooting backend (e.g. HF Space waking up) do NOT trigger
+      // handleUnauthorized() and wipe the current video / log the user out.
+      const fullUrl = `${apiBaseUrl}/api/history/${encodeURIComponent(id)}`;
+      const res = await fetch(fullUrl, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${targetSession.token}`
+        },
         body: JSON.stringify({ currentTime, duration })
       });
       if (!isActiveSession(targetSession)) return;
@@ -514,7 +533,8 @@ export default function App() {
         setHistoryList(data);
       }
     } catch (e) {
-      console.error('Failed to update progress in history:', e);
+      // Silently ignore – progress sync is non-critical
+      console.debug('Progress sync skipped (backend unreachable):', e.message);
     }
   };
 
