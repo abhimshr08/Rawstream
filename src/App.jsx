@@ -69,24 +69,9 @@ export default function App() {
   const [isOfflineMode, setIsOfflineMode] = useState(() => {
     const stored = localStorage.getItem('rawstream_offline_mode');
     if (stored !== null) return stored === 'true';
-    return isStaticHost;
+    return false;
   });
   const [backendReachable, setBackendReachable] = useState(null);
-
-  // Auto-discover local backend server on port 3000 when running on static hosts
-  useEffect(() => {
-    if (isStaticHost && backendUrl !== 'http://localhost:3000' && !localStorage.getItem('rawstream_backend_url')) {
-      fetch('http://localhost:3000/api/config', { signal: AbortSignal.timeout(1500) })
-        .then(res => res.json())
-        .then(data => {
-          if (data && data.success) {
-            console.log('[App] Auto-connected to active local backend on http://localhost:3000');
-            setBackendUrlState('http://localhost:3000');
-          }
-        })
-        .catch(() => {/* local server not active */});
-    }
-  }, [isStaticHost, backendUrl]);
 
   useEffect(() => {
     if (isOfflineMode) {
@@ -920,12 +905,16 @@ export default function App() {
 
   const findPreferredTorrentFile = (files) => {
     if (!files || files.length === 0) return null;
-    return files.find(f => {
-      const name = f.name.toLowerCase();
+    const videoFiles = files.filter(f => {
+      const name = (f.name || f.path || '').toLowerCase();
       return name.endsWith('.mp4') || name.endsWith('.webm') || name.endsWith('.mkv') ||
         name.endsWith('.avi') || name.endsWith('.mov') || name.endsWith('.ogv') ||
         name.endsWith('.m4v') || name.endsWith('.ts');
-    }) || files[0];
+    });
+    if (videoFiles.length === 0) return files[0];
+    // Sort by file length descending to select the main feature movie file over samples
+    videoFiles.sort((a, b) => (b.length || 0) - (a.length || 0));
+    return videoFiles[0];
   };
 
   const loadTorrent = async (torrentSource, resumeSource = null) => {
