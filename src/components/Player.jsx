@@ -341,13 +341,33 @@ export default function Player({
     return () => clearTimeout(fallbackTimer);
   }, [currentVideo, torrentPlayerMode, webtorrentLoaded]);
 
-  // Auto-switch to P2P mode when video has forceBrowserP2P flag (server fallback scenario)
+  // Helper to detect non-native video containers & codecs (HEVC/H.265/MKV/WEB-DL) that HTML5 <video> cannot decode video frames for directly (resulting in audio-only black screen)
+  const isNonNativeFormat = (str) => {
+    if (!str) return false;
+    const lower = str.toLowerCase();
+    return lower.includes('.mkv') || lower.includes('.avi') || lower.includes('.ts') ||
+           lower.includes('.flv') || lower.includes('.vob') || lower.includes('.wmv') ||
+           lower.includes('.m2ts') || lower.includes('hevc') || lower.includes('h265') ||
+           lower.includes('x265') || lower.includes('10bit') || lower.includes('hdr') ||
+           lower.includes('ddp') || lower.includes('web-dl') || lower.includes('bluray');
+  };
+
+  // Auto-switch to P2P mode when video has forceBrowserP2P flag, OR switch to server transcode mode for non-native MKV/AVI/TS containers
   useEffect(() => {
     if (currentVideo?.forceBrowserP2P && torrentPlayerMode !== 'p2p') {
       logDebug('[WebTorrent] currentVideo.forceBrowserP2P=true — switching to browser P2P mode.');
       setTorrentPlayerMode('p2p');
+      return;
     }
-  }, [currentVideo]);
+    // Non-native video containers (.mkv, .avi, .ts) played via Browser P2P output audio with a black screen.
+    // Auto-switch to server mode so FFmpeg transcodes them to standard MP4 (H.264 + AAC).
+    if (currentVideo?.service === 'torrent' && torrentPlayerMode === 'p2p' && !isStaticHost) {
+      if (isNonNativeFormat(currentVideo.title) || isNonNativeFormat(currentVideo.streamUrl)) {
+        logDebug('[WebTorrent] Non-native container (.mkv/.avi/.ts) detected in P2P mode. Switching to server transcode mode for full video display.');
+        setTorrentPlayerMode('server');
+      }
+    }
+  }, [currentVideo, torrentPlayerMode, isStaticHost]);
 
   // Initialize WebTorrent direct client-side player when mode is p2p
   useEffect(() => {
@@ -399,12 +419,14 @@ export default function Player({
       setIsBuffering(false);
     }, 45000);
 
-    // Setup an initial peer warning timer
+    // Setup an initial peer check timer: if 0 WebRTC peers after 6s, auto fallback to Server Stream
     const peerTimer = setTimeout(() => {
-      if (client.torrents.length > 0 && client.torrents[0].numPeers === 0) {
-        addToast('Direct P2P has 0 WebRTC peers. Try switching to Server Stream mode if buffering stalls.', 'info');
+      if (client && client.torrents && client.torrents.length > 0 && client.torrents[0].numPeers === 0 && !isStaticHost) {
+        logDebug('[WebTorrent] 0 WebRTC peers found in browser P2P mode after 6s. Auto-switching to Server Stream mode...');
+        addToast('Switched to Server Stream mode (0 WebRTC peers in Browser P2P)', 'info');
+        setTorrentPlayerMode('server');
       }
-    }, 12000);
+    }, 6000);
 
     try {
       client.add(magnetUri, { announce: TORRENT_WEBRTC_TRACKERS }, (torrent) => {
@@ -874,6 +896,13 @@ export default function Player({
     }
   };
 
+  // Auto-probe stream duration in background if mediaDuration is 0
+  useEffect(() => {
+    if (currentVideo && mediaDuration === 0) {
+      fetchProbedDurationIfNeeded();
+    }
+  }, [currentVideo, mediaDuration]);
+
   // Video Actions
   const togglePlay = () => {
     const video = videoRef.current;
@@ -1177,6 +1206,23 @@ export default function Player({
       if (ambientIntervalRef.current) clearInterval(ambientIntervalRef.current);
       ambientIntervalRef.current = setInterval(updateAmbientGlow, 100);
     }
+
+    // Black Video Frame Auto-Detection:
+    // If audio is playing (currentTime > 0.5 & !paused) but videoWidth === 0,
+    // Chrome is playing audio from an unsupported container (.mkv/.avi/.ts) without rendering video frames.
+    // Automatically trigger transcode mode to decode and stream H.264 video frames.
+    setTimeout(() => {
+      const v = videoRef.current;
+      if (v && !v.paused && v.currentTime > 0.5 && v.videoWidth === 0 && !useEmbed) {
+        logDebug('[Player] Audio is playing but videoWidth === 0 (unsupported video container/codec). Auto-enabling server transcode...');
+        addToast('Converting video format for full display...', 'info');
+        if (isTorrent && torrentPlayerMode === 'p2p' && !isStaticHost) {
+          setTorrentPlayerMode('server');
+        } else if (setSelectedQuality) {
+          setSelectedQuality('720p');
+        }
+      }
+    }, 1500);
   };
 
   const handlePause = () => {
@@ -1443,6 +1489,8 @@ export default function Player({
   // Watch currentVideo and other playback parameters changes to load/reload source
   useEffect(() => {
     logDebug(`[Player useEffect] Triggered: currentVideo=${currentVideo?.id}, useEmbed=${useEmbed}, needsTranscode=${needsTranscode}`);
+    let playAttemptCancelled = false;
+    let playTimerId = null;
     if (!currentVideo) {
       setUseEmbed(false);
       setShowPlaceholder(true);
@@ -1479,8 +1527,8 @@ export default function Player({
     lastAcodecRef.current = acodec;
     lastUseEmbedRef.current = useEmbed;
 
-    if (isSameVideo && !streamUrlChanged && !transcodeChanged && !qualityChanged && !vcodecChanged && !acodecChanged && !embedChanged) {
-      logDebug(`[Player useEffect] No parameter changes. Skipping source load.`);
+    if (isSameVideo && !streamUrlChanged && !transcodeChanged && !qualityChanged && !embedChanged) {
+      logDebug(`[Player useEffect] Same video and core stream parameters unchanged. Skipping source reload.`);
       return;
     }
 
@@ -1565,7 +1613,12 @@ export default function Player({
       }
 
       const isServerTorrentRedef = currentVideo.service === 'torrent' && torrentPlayerMode === 'server';
-      const useTranscode = needsTranscode || (selectedQuality && selectedQuality !== 'original');
+      const isNonNativeMedia = isNonNativeFormat(currentVideo.title) ||
+                               isNonNativeFormat(currentVideo.streamUrl) ||
+                               isNonNativeFormat(extractedRawUrl) ||
+                               (vcodec && ['hevc', 'h265', 'mpeg4', 'msmpeg4', 'vc1', 'vp6'].includes(vcodec.toLowerCase()));
+
+      const useTranscode = needsTranscode || isNonNativeMedia || (selectedQuality && selectedQuality !== 'original');
       
       if (useTranscode) {
         const qualityParam = selectedQuality && selectedQuality !== 'original' ? `&quality=${encodeURIComponent(selectedQuality)}` : '';
@@ -1602,11 +1655,11 @@ export default function Player({
         torrentWatchdogRef.current = setTimeout(() => {
           if (isTorrent) {
             switchTorrentToWebtorFallback(
-              '[Watchdog] Server stream failed to load or buffer within 45s.',
+              '[Watchdog] Server stream failed to load or buffer within 90s.',
               'Server stream failed to buffer.'
             );
           }
-        }, 45000);
+        }, 90000);
       }
 
       checkForResumeProgress(currentVideo.id);
@@ -1616,8 +1669,8 @@ export default function Player({
       // is called synchronously right after load() while the browser is still
       // resetting its internal media pipeline.
       logDebug('[Player useEffect] Preparing autoplay invocation...');
-      let playAttemptCancelled = false;
-      let playTimerId = null;
+      playAttemptCancelled = false;
+      playTimerId = null;
 
       const attemptPlay = () => {
         if (playAttemptCancelled) return;
@@ -2030,11 +2083,11 @@ export default function Player({
             if (video) {
               const useTranscode = needsTranscode || (selectedQuality && selectedQuality !== 'original');
               if (isFinite(video.duration) && video.duration > 0 && mediaDuration === 0) {
-                // For transcoded/growing streams, the video.duration is highly inaccurate initially.
-                // Avoid syncing small initial fragment durations (e.g. 4s); wait for runtime probe.
-                if (!useTranscode || video.duration > 30) {
+                // For live transcoded streams, video.duration is ONLY the length of the transcoded chunk buffered so far.
+                // Never overwrite mediaDuration with live transcoded buffer lengths.
+                if (!useTranscode) {
                   setMediaDuration(video.duration);
-                  logDebug(`[Player] Duration synced from stream: ${video.duration.toFixed(1)}s`);
+                  logDebug(`[Player] Duration synced from native stream: ${video.duration.toFixed(1)}s`);
                 }
               }
               if (mediaDuration === 0) {

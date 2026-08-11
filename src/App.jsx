@@ -27,6 +27,13 @@ const isTvBrowser = typeof navigator !== 'undefined' && (
   /SmartTV|Tizen|WebOS|LG\sBrowser|LG\sTV|JioSphere|Jio\sSphere|JioPages|Jio\sPages|SamsungTV|SonyTV|AppleTV|Panasonic|Philips|Viera|Roku|Opera\sTV|NetCast|DuneHD|Vizio/i.test(navigator.userAgent)
 );
 
+const isStaticHost = typeof window !== 'undefined' && (
+  window.location.hostname.endsWith('.github.io') ||
+  window.location.hostname.endsWith('.netlify.app') ||
+  window.location.hostname.endsWith('.vercel.app') ||
+  window.location.hostname.endsWith('.pages.dev')
+);
+
 export default function App() {
   // Authentication State
   const [session, setSession] = useState({
@@ -44,10 +51,6 @@ export default function App() {
     
     // Default dynamic resolution
     const hostname = window.location.hostname;
-    const isStaticHost = hostname.endsWith('.github.io') ||
-      hostname.endsWith('.netlify.app') ||
-      hostname.endsWith('.vercel.app') ||
-      hostname.endsWith('.pages.dev');
     
     if (isStaticHost) {
       return 'https://maverick9876-rawstream.hf.space';
@@ -1019,13 +1022,14 @@ export default function App() {
               const targetIndex = preferredFile ? preferredFile.index : 0;
               const newStreamUrl = buildTorrentServerStreamUrl(mergedInfo.infoHash, targetIndex);
 
-              const isPrefNative = preferredFile && (
-                preferredFile.name.toLowerCase().endsWith('.mp4') ||
-                preferredFile.name.toLowerCase().endsWith('.webm') ||
-                preferredFile.name.toLowerCase().endsWith('.mov')
-              );
-              setNeedsTranscode(!isPrefNative);
-              setMediaDuration(0);
+              const fileName = preferredFile ? preferredFile.name.toLowerCase() : '';
+              const containsHevcOrHighCodec = fileName.includes('hevc') || fileName.includes('h265') || fileName.includes('x265') || fileName.includes('10bit') || fileName.includes('hdr') || fileName.includes('ddp') || fileName.includes('dts') || fileName.includes('ac3') || fileName.includes('web-dl') || fileName.includes('1080p') || fileName.includes('2160p') || fileName.includes('4k');
+              
+              // Torrent releases overwhelmingly use HEVC/H.265 or non-native audio/video codecs.
+              // Always default server torrent streams to needsTranscode = true unless explicitly verified as standard H.264 MP4.
+              const isStrictNativeMp4 = fileName.endsWith('.mp4') && !containsHevcOrHighCodec;
+              setNeedsTranscode(!isStrictNativeMp4);
+              setMediaDuration(mergedInfo.duration || 0);
               setVcodec('h264');
               setAcodec('aac');
 
@@ -1045,40 +1049,25 @@ export default function App() {
               setPlayerLoaderMessage('');
               addToHistory(videoObj);
 
-              // Probe in background once metadata loads
-              logDebug(`[Torrent Background] Probing stream in background: ${newStreamUrl}`);
-              const probeUrl = buildTorrentProbeUrl(mergedInfo.infoHash, targetIndex);
-              fetch(`${apiBaseUrl}/api/probe?url=${encodeURIComponent(probeUrl)}`)
-                .then(res => {
-                  if (res.ok) return res.json();
-                  throw new Error(`HTTP ${res.status}`);
-                })
-                .then(meta => {
-                  logDebug(`[Torrent Background Probe] Result: duration=${meta.duration}s, needsTranscode=${meta.needsTranscode}`);
-                  setMediaDuration(meta.duration || 0);
-                  setNeedsTranscode(meta.needsTranscode !== undefined ? meta.needsTranscode : true);
-                  setVcodec(meta.videoCodec || 'h264');
-                  setAcodec(meta.audioCodec || 'aac');
-                })
-                .catch(e => {
-                  logDebug(`[Torrent Background Probe] Error: ${e.message}`);
-                });
+              // For torrent streams, needsTranscode is already determined by filename/container.
+              // Skipping background ffprobe prevents bandwidth contention on torrent piece downloads.
+              logDebug(`[Torrent Background] Server torrent stream ready: ${newStreamUrl}`);
             } else {
               addToast('No files found in torrent.', 'error');
               setPlayerLoading(false);
             }
-          } else {
-            // Backend unavailable — fall back to browser P2P mode regardless of host type.
-            logDebug('[Torrent] Backend unavailable or no info returned. Falling back to browser P2P mode.');
+          } else if (isStaticHost && backendReachable === false) {
+            // Only force browser P2P if backend is genuinely offline/unreachable on static hosts
+            logDebug('[Torrent] Backend unreachable on static host. Falling back to browser P2P mode.');
             const videoObj = attachResumeProgress({
               id: initialInfo.infoHash,
               title: initialInfo.name || 'Torrent Stream',
               originalUrl: magnetUri,
-              streamUrl: magnetUri,      // P2P mode reads originalUrl/streamUrl as the magnet
+              streamUrl: magnetUri,
               rawStreamUrl: magnetUri,
               service: 'torrent',
               torrentFileIndex: 0,
-              forceBrowserP2P: true,     // Signal Player.jsx to use browser WebTorrent even on non-static hosts
+              forceBrowserP2P: true,
               timestamp: Date.now()
             }, resumeSource);
             setCurrentVideo(videoObj);
@@ -1086,6 +1075,29 @@ export default function App() {
             setPlayerLoaderMessage('');
             addToHistory(videoObj);
             addToast('Streaming via browser P2P', 'info');
+          } else {
+            // Backend server is available: use server torrent stream route so FFmpeg transcodes MKV/H.265 files for full video display
+            logDebug('[Torrent] Using server stream route for torrent playback.');
+            const newStreamUrl = buildTorrentServerStreamUrl(initialInfo.infoHash, 0);
+            const isPrefNative = initialInfo.name && (
+              initialInfo.name.toLowerCase().endsWith('.mp4') ||
+              initialInfo.name.toLowerCase().endsWith('.webm')
+            );
+            setNeedsTranscode(!isPrefNative);
+            const videoObj = attachResumeProgress({
+              id: initialInfo.infoHash,
+              title: initialInfo.name || 'Torrent Stream',
+              originalUrl: magnetUri,
+              streamUrl: newStreamUrl,
+              rawStreamUrl: `/api/torrent/stream?infoHash=${encodeURIComponent(initialInfo.infoHash)}&fileIndex=0`,
+              service: 'torrent',
+              torrentFileIndex: 0,
+              timestamp: Date.now()
+            }, resumeSource);
+            setCurrentVideo(videoObj);
+            setPlayerLoading(false);
+            setPlayerLoaderMessage('');
+            addToHistory(videoObj);
           }
         }).catch((err) => {
           logDebug(`[Torrent] Background metadata fetch failed: ${err.message}`);

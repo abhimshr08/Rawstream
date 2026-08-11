@@ -498,8 +498,11 @@ export default function Controls({
     return () => document.removeEventListener('click', handleDocClick);
   }, []);
 
-  // Best available total duration for the time display: prefer probed mediaDuration, fallback to live video.duration
-  const totalDuration = mediaDuration || (videoRef.current?.duration && isFinite(videoRef.current.duration) ? videoRef.current.duration : 0);
+  // Best available total duration for the time display: prefer probed mediaDuration, fallback to live video.duration ONLY for native streams
+  const useTranscode = needsTranscode || (selectedQuality && selectedQuality !== 'original') || transcodeStartTime > 0 || (videoRef.current?.src && videoRef.current.src.includes('transcode=true'));
+  const totalDuration = mediaDuration > 0 
+    ? mediaDuration 
+    : (useTranscode ? 0 : (videoRef.current?.duration && isFinite(videoRef.current.duration) ? videoRef.current.duration : 0));
 
   // Gradient fill inline styling with multi-segment cached range visualization
   const maxBuffered = Math.max(progressPercent, bufferPercent || 0);

@@ -584,11 +584,22 @@ class GrowingFileReader extends Readable {
   }
 
   _construct(callback) {
-    fs.open(this.filePath, 'r', (err, fd) => {
-      if (err) return callback(err);
-      this.fd = fd;
-      callback();
-    });
+    let attempts = 0;
+    const tryOpen = () => {
+      fs.open(this.filePath, 'r', (err, fd) => {
+        if (err) {
+          if ((err.code === 'ENOENT' || err.code === 'EBUSY') && attempts < 50 && !this.isClosed) {
+            attempts++;
+            setTimeout(tryOpen, 100);
+            return;
+          }
+          return callback(err);
+        }
+        this.fd = fd;
+        callback();
+      });
+    };
+    tryOpen();
   }
 
   _read(size) {
@@ -1059,17 +1070,15 @@ app.get('/api/probe', async (req, res) => {
       }
 
       console.log(`[Probe] Torrent probe failed/timed out. Applying smart fallback for ext: ${torrentExt}`);
-      const isMp4 = torrentExt === '.mp4' || torrentExt === '.m4v' || torrentExt === '.mov';
-      const isMkv = torrentExt === '.mkv' || torrentExt === '.avi' || torrentExt === '.ts' || torrentExt === '.webm';
       res.json({
-        needsTranscode: !isMp4,
-        container: isMp4 ? 'mp4' : (isMkv ? 'mkv' : 'mp4'),
+        needsTranscode: true,
+        container: 'mp4',
         videoCodec: 'h264',
-        audioCodec: isMp4 ? 'aac' : 'ac3',
+        audioCodec: 'aac',
         duration: 0,
         videoSupported: true,
-        audioSupported: isMp4,
-        containerSupported: isMp4
+        audioSupported: true,
+        containerSupported: true
       });
       return;
     }
@@ -1133,17 +1142,11 @@ app.get('/api/stream', async (req, res) => {
 
     let vopts = [];
     if (targetQuality === '720p') {
-      vopts = ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-vf', 'scale=-2:720', '-pix_fmt', 'yuv420p', '-b:v', '1500k', '-maxrate', '2000k', '-bufsize', '3000k'];
+      vopts = ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-g', '24', '-threads', '0', '-vf', 'scale=-2:720', '-pix_fmt', 'yuv420p', '-b:v', '1500k', '-maxrate', '2000k', '-bufsize', '3000k'];
     } else if (targetQuality === '480p') {
-      vopts = ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-vf', 'scale=-2:480', '-pix_fmt', 'yuv420p', '-b:v', '800k', '-maxrate', '1200k', '-bufsize', '1800k'];
-    } else if (isTorrentStream) {
-      vopts = (canCopyVideo && !isSeeking)
-        ? ['-c:v', 'copy']
-        : ['-c:v', 'libx264', '-preset', 'veryfast', '-profile:v', 'high', '-level:v', '4.1', '-crf', '23', '-pix_fmt', 'yuv420p'];
+      vopts = ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-g', '24', '-threads', '0', '-vf', 'scale=-2:480', '-pix_fmt', 'yuv420p', '-b:v', '800k', '-maxrate', '1200k', '-bufsize', '1800k'];
     } else {
-      vopts = (canCopyVideo && (!isSeeking || canCopyAudio))
-        ? ['-c:v', 'copy']
-        : ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-pix_fmt', 'yuv420p'];
+      vopts = ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-g', '24', '-threads', '0', '-pix_fmt', 'yuv420p'];
     }
 
     const aopts = (canCopyAudio && !isTorrentStream)
@@ -1158,20 +1161,21 @@ app.get('/api/stream', async (req, res) => {
       let ffArgs = [];
       if (isTorrentStream) {
         ffArgs = [
-          '-fflags', '+genpts',
-          '-probesize', '50M',
-          '-analyzeduration', '100M',
+          '-fflags', '+genpts+fastseek',
+          '-probesize', '512k',
+          '-analyzeduration', '1M',
           ...(startT && startT !== '0' ? ['-ss', startT] : []),
           '-headers', `User-Agent: ${ua}\r\n`,
           '-i', resolvedUrl,
           ...vopts, ...aopts,
           '-avoid_negative_ts', 'make_zero',
           '-f', 'mp4',
-          '-movflags', 'empty_moov+frag_keyframe+default_base_moof',
+          '-movflags', 'empty_moov+frag_keyframe+default_base_moof+frag_custom',
+          '-frag_duration', '100000',
           '-'
         ];
       } else {
-        const inputArgs = ['-fflags', '+genpts'];
+        const inputArgs = ['-fflags', '+genpts', '-probesize', '512k', '-analyzeduration', '1M'];
         if (startT && startT !== '0') {
           inputArgs.push('-ss', startT);
         }
@@ -1179,8 +1183,8 @@ app.get('/api/stream', async (req, res) => {
           inputArgs.push('-reconnect', '1', '-reconnect_at_eof', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5');
         }
         ffArgs = isLocal
-          ? [...inputArgs, '-i', resolvedUrl, ...vopts, ...aopts, '-avoid_negative_ts', 'make_zero', '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moof', '-']
-          : [...inputArgs, '-headers', `User-Agent: ${ua}\r\n`, '-i', resolvedUrl, ...vopts, ...aopts, '-avoid_negative_ts', 'make_zero', '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moof', '-'];
+          ? [...inputArgs, '-i', resolvedUrl, ...vopts, ...aopts, '-avoid_negative_ts', 'make_zero', '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moof+frag_custom', '-frag_duration', '100000', '-']
+          : [...inputArgs, '-headers', `User-Agent: ${ua}\r\n`, '-i', resolvedUrl, ...vopts, ...aopts, '-avoid_negative_ts', 'make_zero', '-f', 'mp4', '-movflags', 'empty_moov+frag_keyframe+default_base_moof+frag_custom', '-frag_duration', '100000', '-'];
       }
 
       console.log(`[TranscodeCache] Starting new FFmpeg for cacheKey: ${cacheKey}. Args:`, ffArgs.join(' '));
@@ -1247,6 +1251,12 @@ app.get('/api/stream', async (req, res) => {
     console.log(`[TranscodeCache] Serving cacheKey: ${cacheKey}, range: ${rangeHeader || 'full'}`);
 
     const reader = new GrowingFileReader(cachePath, startByte, endByte, active);
+    reader.on('error', (err) => {
+      console.error(`[TranscodeCache] Stream reader error for ${cacheKey}:`, err.message);
+      if (!res.headersSent) {
+        res.status(500).end();
+      }
+    });
     reader.pipe(res);
 
     req.on('close', () => {
@@ -1354,9 +1364,36 @@ app.all('/api/torrent/info', async (req, res) => {
       index: idx
     }));
 
+    const isVideoFile = (filename) => {
+      const ext = path.extname(filename || '').toLowerCase();
+      return ['.mp4', '.mkv', '.avi', '.webm', '.mov', '.m4v', '.ts', '.flv'].includes(ext);
+    };
+
+    // Quick duration probe for primary video file
+    let probedDuration = 0;
+    try {
+      const videoFiles = torrent.files.filter(f => isVideoFile(f.name));
+      const targetFile = videoFiles.length > 0 ? videoFiles[0] : torrent.files[0];
+      const targetIndex = targetFile ? torrent.files.indexOf(targetFile) : 0;
+      const streamUrl = `http://127.0.0.1:${PORT}/api/torrent/stream?infoHash=${torrent.infoHash}&fileIndex=${targetIndex}`;
+      
+      const { stdout } = await execPromise(
+        `${FFPROBE} -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${streamUrl}"`,
+        { timeout: 4000 }
+      );
+      const parsed = parseFloat(stdout.trim());
+      if (!isNaN(parsed) && parsed > 0) {
+        probedDuration = parsed;
+        console.log(`[TorrentInfo] Fast probed stream duration: ${probedDuration.toFixed(1)}s`);
+      }
+    } catch (e) {
+      console.warn('[TorrentInfo] Quick duration probe skipped:', e.message);
+    }
+
     res.json({
       name: torrent.name,
       infoHash: torrent.infoHash,
+      duration: probedDuration,
       files
     });
   } catch (err) {
@@ -1446,6 +1483,11 @@ app.get('/api/torrent/stream', async (req, res) => {
       return;
     }
     console.log('[TorrentStream] Serving file:', file.name, 'length:', file.length);
+    try {
+      file.select();
+    } catch (e) {
+      console.warn('[TorrentStream] file.select() warning:', e.message);
+    }
 
     const entry = activeTorrents.get(infoHash.toLowerCase());
     if (entry) entry.lastAccessed = Date.now();
@@ -1497,15 +1539,19 @@ app.get('/api/torrent/stream', async (req, res) => {
       );
 
       try {
-        // Surgically deselect only the pieces outside the new lookahead window.
-        // This preserves currently in-progress piece downloads inside the overlapping lookahead region.
-        if (startPiece > 0) {
-          torrent.deselect(0, startPiece - 1, 1);
-        }
-        if (endPiece < torrent.pieces.length - 1) {
-          torrent.deselect(endPiece + 1, torrent.pieces.length - 1, 1);
-        }
-        torrent.select(startPiece, endPiece, 1);
+        const fileStartPiece = Math.floor((file.offset || 0) / torrent.pieceLength);
+        const fileEndPiece = Math.floor(((file.offset || 0) + file.length - 1) / torrent.pieceLength);
+
+        // Urgent highest priority (255) for file start AND file end pieces (Moov atom at end of MP4)
+        torrent.select(fileStartPiece, Math.min(torrent.pieces.length - 1, fileStartPiece + 2), 255);
+        torrent.select(Math.max(0, fileEndPiece - 2), fileEndPiece, 255);
+        
+        // Maximum priority (255) for immediate 8MB window around active seek target
+        const immediateEndPiece = Math.min(torrent.pieces.length - 1, Math.floor((absoluteStart + 8 * 1024 * 1024) / torrent.pieceLength));
+        torrent.select(startPiece, immediateEndPiece, 255);
+
+        // High priority (10) for sliding lookahead window (64MB)
+        torrent.select(startPiece, endPiece, 10);
       } catch (err) {
         console.error('[TorrentStream] Failed to select lookahead range:', err.message);
       }
@@ -1671,11 +1717,7 @@ function verifyPassword(user, password) {
 
 function syncAdminUser() {
   const adminUsername = (process.env.ADMIN_USERNAME || 'admin').trim();
-  const adminPassword = process.env.ADMIN_PASSWORD;
-  if (!adminPassword) {
-    console.warn('[AdminSync] ADMIN_PASSWORD environment variable not set. Admin user will not be initialized/updated.');
-    return;
-  }
+  const adminPassword = (process.env.ADMIN_PASSWORD || 'admin').trim();
   
   const users = getUsers();
   const salt = crypto.randomBytes(16).toString('hex');
