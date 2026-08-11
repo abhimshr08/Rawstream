@@ -67,7 +67,9 @@ export default function App() {
   const apiBaseUrl = backendUrl.trim().replace(/\/$/, '');
 
   const [isOfflineMode, setIsOfflineMode] = useState(() => {
-    return localStorage.getItem('rawstream_offline_mode') === 'true';
+    const stored = localStorage.getItem('rawstream_offline_mode');
+    if (stored !== null) return stored === 'true';
+    return isStaticHost;
   });
   const [backendReachable, setBackendReachable] = useState(null);
 
