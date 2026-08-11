@@ -6,7 +6,6 @@ export default function AuthOverlay({
   show,
   onSuccess,
   apiBaseUrl = '',
-  onBackendUrlChange,
   isOfflineMode = false,
   backendReachable = null,
   onToggleOfflineMode
@@ -17,12 +16,6 @@ export default function AuthOverlay({
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [showServerConfig, setShowServerConfig] = useState(false);
-  const [tempBackendUrl, setTempBackendUrl] = useState(apiBaseUrl);
-
-  useEffect(() => {
-    setTempBackendUrl(apiBaseUrl);
-  }, [apiBaseUrl]);
 
   if (!show) return null;
 
@@ -351,54 +344,6 @@ export default function AuthOverlay({
           </button>
         </div>
 
-        <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', marginTop: '1.5rem', paddingTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-          <button
-            type="button"
-            onClick={() => setShowServerConfig(!showServerConfig)}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: 'var(--accent-primary)',
-              fontSize: '0.8rem',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '4px',
-              opacity: 0.8,
-              width: '100%',
-              padding: '0.25rem'
-            }}
-          >
-            <span>🔧 {showServerConfig ? 'Hide Connection Settings' : 'Configure Connection Settings'}</span>
-          </button>
-          
-          {showServerConfig && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem' }}>
-              <div className="auth-input-group" style={{ marginBottom: 0 }}>
-                <label style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.6)' }}>Backend API URL</label>
-                <div className="auth-input-wrapper" style={{ height: '36px' }}>
-                  <input
-                    type="text"
-                    placeholder="e.g. http://192.168.1.15:3000"
-                    value={tempBackendUrl}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setTempBackendUrl(val);
-                      if (onBackendUrlChange) {
-                        onBackendUrlChange(val);
-                      }
-                    }}
-                    style={{ fontSize: '0.8rem', height: '100%', padding: '0 0.75rem' }}
-                  />
-                </div>
-              </div>
-              <p style={{ fontSize: '0.68rem', color: 'rgba(255,255,255,0.4)', margin: 0, lineHeight: '1.3' }}>
-                If you are running the backend on another computer on the same network, enter its IP address here. Leave blank for relative paths (default).
-              </p>
-            </div>
-          )}
-        </div>
       </div>
     </div>
   );

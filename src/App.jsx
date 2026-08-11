@@ -44,12 +44,8 @@ export default function App() {
   const sessionRef = useRef(session);
   const [showAuth, setShowAuth] = useState(!session.token);
 
-  // Backend URL Config State
-  const [backendUrl, setBackendUrlState] = useState(() => {
-    const stored = localStorage.getItem('rawstream_backend_url');
-    if (stored !== null) return stored;
-    
-    // Default dynamic resolution
+  // Backend URL Config State (Default dynamic resolution)
+  const [backendUrl] = useState(() => {
     const hostname = window.location.hostname;
     
     if (isStaticHost) {
@@ -1480,38 +1476,6 @@ export default function App() {
             </p>
           </div>
 
-          <div className="auth-input-group" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-            <label htmlFor="settings-backend-url" style={{ fontSize: '0.85rem', color: 'rgba(255,255,255,0.7)', fontWeight: '500' }}>Backend API URL</label>
-            <input
-              type="text"
-              id="settings-backend-url"
-              placeholder="e.g. http://localhost:3000"
-              defaultValue={backendUrl}
-              onChange={(e) => {
-                const val = e.target.value.trim();
-                setBackendUrlState(val);
-                if (val) {
-                  localStorage.setItem('rawstream_backend_url', val);
-                } else {
-                  localStorage.removeItem('rawstream_backend_url');
-                }
-              }}
-              style={{
-                background: 'rgba(255,255,255,0.03)',
-                border: '1px solid rgba(255,255,255,0.1)',
-                borderRadius: '6px',
-                padding: '0.5rem 0.75rem',
-                color: 'white',
-                fontSize: '0.85rem',
-                width: '100%',
-                boxSizing: 'border-box'
-              }}
-            />
-            <p style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.4)', margin: '0.25rem 0 0 0', lineHeight: '1.4' }}>
-              Connect to a custom Express backend. Leave blank to default to relative paths (when running on localhost) or http://localhost:3000 (when deployed on static hosts like GitHub Pages).
-            </p>
-          </div>
-
           <div className="auth-input-group" style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '0.75rem', background: 'rgba(255,255,255,0.02)', padding: '0.75rem', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.06)' }}>
             <input
               type="checkbox"
@@ -1673,14 +1637,6 @@ export default function App() {
         show={showAuth}
         onSuccess={handleSetSession}
         apiBaseUrl={apiBaseUrl}
-        onBackendUrlChange={(val) => {
-          setBackendUrlState(val);
-          if (val) {
-            localStorage.setItem('rawstream_backend_url', val);
-          } else {
-            localStorage.removeItem('rawstream_backend_url');
-          }
-        }}
         isOfflineMode={isOfflineMode}
         backendReachable={backendReachable}
         onToggleOfflineMode={(val) => {
