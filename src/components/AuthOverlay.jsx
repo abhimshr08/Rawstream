@@ -276,6 +276,31 @@ export default function AuthOverlay({
               {loading && <span className="auth-spinner" style={{ marginRight: '6px' }} />}
               <span>{loading ? 'Signing in...' : 'Sign In'}</span>
             </button>
+
+            <button
+              type="button"
+              className="demo-guest-access-btn"
+              onClick={() => onSuccess('admin', 'demo-token-admin', true)}
+              style={{
+                marginTop: '0.75rem',
+                width: '100%',
+                padding: '0.75rem',
+                borderRadius: '8px',
+                background: 'rgba(59, 130, 246, 0.2)',
+                border: '1px solid rgba(59, 130, 246, 0.4)',
+                color: '#60a5fa',
+                fontWeight: '600',
+                fontSize: '0.9rem',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+                transition: 'all 0.2s ease'
+              }}
+            >
+              <span>Instant Demo Access (Bypass Login)</span>
+            </button>
           </form>
         ) : (
           <form id="register-form" className="auth-form" onSubmit={handleRegisterSubmit}>
