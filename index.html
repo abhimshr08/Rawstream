@@ -17,7 +17,7 @@
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 
   <!-- Custom Styles -->
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
   <div id="root"></div>
@@ -25,12 +25,15 @@
     // Register the range-cache Service Worker for torrent stream byte caching
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw-range-cache.js', { scope: '/' })
+        const swPath = window.location.pathname.endsWith('/') 
+          ? `${window.location.pathname}sw-range-cache.js` 
+          : `${window.location.pathname.substring(0, window.location.pathname.lastIndexOf('/') + 1)}sw-range-cache.js`;
+        navigator.serviceWorker.register(swPath)
           .then((reg) => console.log('[SW] Range cache registered:', reg.scope))
           .catch((err) => console.warn('[SW] Range cache registration failed:', err));
       });
     }
   </script>
-  <script type="module" src="/src/main.jsx"></script>
+  <script type="module" src="./src/main.jsx"></script>
 </body>
 </html>
