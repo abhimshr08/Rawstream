@@ -1117,10 +1117,11 @@ app.get('/api/stream', async (req, res) => {
 
   const isLocal = resolvedUrl.startsWith('/');
   if (!isLocal) {
-    const allowed = ['drive.google.com','googlevideo.com','api.onedrive.com','onedrive.live.com','1drv.ms','localhost','127.0.0.1'];
+    const reqHost = (req.headers.host || '').split(':')[0].toLowerCase();
+    const allowed = ['drive.google.com','googlevideo.com','api.onedrive.com','onedrive.live.com','1drv.ms','localhost','127.0.0.1','hf.space','hf.co','github.io', reqHost];
     try {
-      const host = new URL(resolvedUrl).hostname;
-      if (!allowed.some(d => host === d || host.endsWith('.' + d))) {
+      const host = new URL(resolvedUrl).hostname.toLowerCase();
+      if (!allowed.some(d => d && (host === d || host.endsWith('.' + d)))) {
         res.status(403).send('Domain not allowed'); return;
       }
     } catch { res.status(400).send('Invalid URL'); return; }
