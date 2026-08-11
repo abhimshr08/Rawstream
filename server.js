@@ -1116,7 +1116,15 @@ app.get('/api/stream', async (req, res) => {
     // ignore URL parsing errors
   }
 
-  const isLocal = resolvedUrl.startsWith('/');
+  // Ensure internal API routes resolve to zero-latency local loopback 127.0.0.1:PORT for FFmpeg
+  if (resolvedUrl.includes('/api/torrent/stream') || resolvedUrl.includes('/api/gdrive-stream')) {
+    try {
+      const u = new URL(resolvedUrl, `http://127.0.0.1:${PORT}`);
+      resolvedUrl = `http://127.0.0.1:${PORT}${u.pathname}${u.search}`;
+    } catch (e) {}
+  }
+
+  const isLocal = resolvedUrl.startsWith('/') || resolvedUrl.includes(`127.0.0.1:${PORT}`) || resolvedUrl.includes('localhost');
   if (!isLocal) {
     const reqHost = (req.headers.host || '').split(':')[0].toLowerCase();
     const allowed = ['drive.google.com','googlevideo.com','api.onedrive.com','onedrive.live.com','1drv.ms','localhost','127.0.0.1','hf.space','hf.co','github.io', reqHost];
@@ -1140,7 +1148,7 @@ app.get('/api/stream', async (req, res) => {
     const canCopyVideo = supportedVideo.includes((vcodec || '').toLowerCase());
     const canCopyAudio = supportedAudio.includes((acodec || '').toLowerCase());
 
-    const isTorrentStream = (resolvedUrl.includes('127.0.0.1') || resolvedUrl.includes('localhost')) && resolvedUrl.includes('/api/torrent/stream');
+    const isTorrentStream = resolvedUrl.includes('/api/torrent/stream');
 
     let vopts = [];
     if (targetQuality === '720p') {
@@ -1544,9 +1552,13 @@ app.get('/api/torrent/stream', async (req, res) => {
         const fileStartPiece = Math.floor((file.offset || 0) / torrent.pieceLength);
         const fileEndPiece = Math.floor(((file.offset || 0) + file.length - 1) / torrent.pieceLength);
 
-        // Urgent highest priority (255) for file start AND file end pieces (Moov atom at end of MP4)
-        torrent.select(fileStartPiece, Math.min(torrent.pieces.length - 1, fileStartPiece + 2), 255);
-        torrent.select(Math.max(0, fileEndPiece - 2), fileEndPiece, 255);
+        const isMp4File = file.name.toLowerCase().endsWith('.mp4');
+        // Urgent highest priority (255) for file start pieces
+        torrent.select(fileStartPiece, Math.min(torrent.pieces.length - 1, fileStartPiece + 4), 255);
+        if (isMp4File) {
+          // For MP4 files, also request end pieces for moov atom
+          torrent.select(Math.max(0, fileEndPiece - 2), fileEndPiece, 255);
+        }
         
         // Maximum priority (255) for immediate 8MB window around active seek target
         const immediateEndPiece = Math.min(torrent.pieces.length - 1, Math.floor((absoluteStart + 8 * 1024 * 1024) / torrent.pieceLength));
