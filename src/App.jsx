@@ -73,6 +73,21 @@ export default function App() {
   });
   const [backendReachable, setBackendReachable] = useState(null);
 
+  // Auto-discover local backend server on port 3000 when running on static hosts
+  useEffect(() => {
+    if (isStaticHost && backendUrl !== 'http://localhost:3000' && !localStorage.getItem('rawstream_backend_url')) {
+      fetch('http://localhost:3000/api/config', { signal: AbortSignal.timeout(1500) })
+        .then(res => res.json())
+        .then(data => {
+          if (data && data.success) {
+            console.log('[App] Auto-connected to active local backend on http://localhost:3000');
+            setBackendUrlState('http://localhost:3000');
+          }
+        })
+        .catch(() => {/* local server not active */});
+    }
+  }, [isStaticHost, backendUrl]);
+
   useEffect(() => {
     if (isOfflineMode) {
       setBackendReachable(null);
