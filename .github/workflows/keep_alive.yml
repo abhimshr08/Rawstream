@@ -1,0 +1,16 @@
+name: Keep HF Space Warm
+
+on:
+  schedule:
+    # Trigger ping every 10 minutes to prevent HF space from sleeping
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Hugging Face Space Backend
+        run: |
+          echo "Pinging Hugging Face Space at $(date)..."
+          curl -s -f -m 30 https://maverick9876-rawstream.hf.space/api/config || echo "HF Space ping completed with warning"
