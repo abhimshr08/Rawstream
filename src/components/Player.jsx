@@ -450,6 +450,12 @@ export default function Player({
           return;
         }
 
+        const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+        if (isStaticHost && (ext === '.mkv' || ext === '.avi') && torrentPlayerMode === 'p2p') {
+          logDebug(`[WebTorrent] ${ext} container loaded in Browser P2P mode on static host. Browsers cannot decode MKV natively.`);
+          addToast(`.mkv files require Server Transcode. Please enable Server Stream mode or use http://localhost:3000`, 'warning');
+        }
+
         logDebug(`[WebTorrent] Streaming direct file: ${file.name}`);
         const video = videoRef.current;
         if (video) {
