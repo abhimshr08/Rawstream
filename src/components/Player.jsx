@@ -359,9 +359,9 @@ export default function Player({
       setTorrentPlayerMode('p2p');
       return;
     }
-    // Non-native video containers (.mkv, .avi, .ts) played via Browser P2P output audio with a black screen.
+    // Non-native video containers (.mkv, .avi, .ts) played via Browser P2P output audio with a black screen or fail with unsupported sources.
     // Auto-switch to server mode so FFmpeg transcodes them to standard MP4 (H.264 + AAC).
-    if (currentVideo?.service === 'torrent' && torrentPlayerMode === 'p2p' && !isStaticHost) {
+    if (currentVideo?.service === 'torrent' && torrentPlayerMode === 'p2p') {
       if (isNonNativeFormat(currentVideo.title) || isNonNativeFormat(currentVideo.streamUrl)) {
         logDebug('[WebTorrent] Non-native container (.mkv/.avi/.ts) detected in P2P mode. Switching to server transcode mode for full video display.');
         setTorrentPlayerMode('server');
