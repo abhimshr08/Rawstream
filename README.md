@@ -24,9 +24,9 @@ It utilizes a high-performance backend transcoding proxy powered by **WebTorrent
 ## 🌐 Live Deployments
 
 *   **Primary Web Application (Frontend)**: [https://abhimshr08.github.io/Rawstream/](https://abhimshr08.github.io/Rawstream/)
-    *   *Hosted on GitHub Pages.* This static client features a responsive interface and automatically connects to the backend transcoding space.
+    *   *Hosted on GitHub Pages.* This static client features a responsive glassmorphic interface and automatically connects directly to the backend transcoding space without requiring manual connection configuration.
 *   **Transcoding & Streaming Server (Backend)**: `https://maverick9876-rawstream.hf.space`
-    *   *Hosted on Hugging Face Spaces (Docker).* Serves as the cloud proxy executing FFmpeg transcoding and WebTorrent client operations.
+    *   *Hosted on Hugging Face Spaces (Docker).* Serves as the primary cloud proxy executing FFmpeg video transcoding, stream resolution, and WebTorrent operations.
 
 ---
 
