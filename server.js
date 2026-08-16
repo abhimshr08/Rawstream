@@ -149,6 +149,17 @@ const DEFAULT_TRACKERS = [
   'https://tracker.ren2.xyz:443/announce',
   'http://p4p.arenabg.com:1337/announce',
   'http://tracker.elisan.nu:6969/announce',
+  // Additional HTTP trackers for broader peer discovery
+  'http://tracker.bt4g.com:2095/announce',
+  'http://tracker2.itzmx.com:6961/announce',
+  'http://tracker.gbitt.info:80/announce',
+  'http://tracker.mywaifu.best:6969/announce',
+  'http://tracker1.bt.moack.co.kr:80/announce',
+  'http://tracker.renfei.net:8080/announce',
+  'https://tracker.tamersunion.org/announce',
+  'https://tracker.yemekyedim.com/announce',
+  'https://tr.burnabyhighstar.com/announce',
+  'https://t1.hloli.org/announce',
   // UDP trackers (attempted where allowed)
   'udp://tracker.opentrackr.org:1337/announce',
   'udp://open.stealth.si:80/announce',
@@ -156,6 +167,9 @@ const DEFAULT_TRACKERS = [
   'udp://exodus.desync.com:6969/announce',
   'udp://open.demonii.com:1337/announce',
   'udp://tracker.openbittorrent.com:80/announce',
+  'udp://tracker.coppersurfer.tk:6969/announce',
+  'udp://tracker.leechers-paradise.org:6969/announce',
+  'udp://9.rarbg.to:2920/announce',
   // WebSocket trackers (WebTorrent compatible)
   'wss://tracker.openwebtorrent.com',
   'wss://tracker.btorrent.xyz',
@@ -481,6 +495,20 @@ Genießen Sie den Film!`;
 
     torrent.once('ready', () => {
       console.log(`[TorrentManager] Torrent ready: ${torrent.name}`);
+      // Auto re-announce if 0 peers after 10s to improve discovery
+      setTimeout(() => {
+        if (torrent.numPeers === 0 && !torrent.destroyed) {
+          console.log(`[TorrentManager] 0 peers after 10s, forcing re-announce for: ${torrent.name}`);
+          try { torrent.announce(DEFAULT_TRACKERS); } catch (e) {}
+        }
+      }, 10000);
+      // Second re-announce attempt at 30s
+      setTimeout(() => {
+        if (torrent.numPeers === 0 && !torrent.destroyed) {
+          console.log(`[TorrentManager] Still 0 peers after 30s, re-announcing again for: ${torrent.name}`);
+          try { torrent.announce(DEFAULT_TRACKERS); } catch (e) {}
+        }
+      }, 30000);
       resolve(torrent);
     });
 
@@ -1644,7 +1672,8 @@ app.get('/api/torrent/stream', async (req, res) => {
 });
 
 // ─── User Database & History Manager ──────────────────────────────────────────
-const DATA_DIR = path.join(process.cwd(), 'data');
+// Use HF persistent /data volume if available, otherwise fallback to local ./data
+const DATA_DIR = fs.existsSync('/data') ? '/data/rawstream' : path.join(process.cwd(), 'data');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const HISTORY_FILE = path.join(DATA_DIR, 'history.json');
 const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
@@ -1652,18 +1681,96 @@ const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
 // Sessions persist for 30 days after login (regardless of activity)
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
+// HF Hub persistence: sync critical data files to the Space repo so they survive rebuilds
+const HF_TOKEN = process.env.HF_TOKEN || '';
+const SPACE_REPO = process.env.SPACE_ID || 'Maverick9876/Rawstream';
+const HF_PERSIST_FILES = ['users.json', 'sessions.json', 'history.json'];
+
+async function hfUploadFile(filename, content) {
+  if (!HF_TOKEN) return;
+  try {
+    const resp = await fetch(
+      `https://huggingface.co/api/spaces/${SPACE_REPO}/upload/main/data/${filename}`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${HF_TOKEN}`,
+          'Content-Type': 'application/json'
+        },
+        body: content
+      }
+    );
+    if (resp.ok) {
+      console.log(`[HF Persist] Uploaded ${filename} to repo`);
+    }
+  } catch (e) {
+    // Silently ignore upload errors — local filesystem is primary
+  }
+}
+
+async function hfDownloadFile(filename) {
+  if (!HF_TOKEN) return null;
+  try {
+    const resp = await fetch(
+      `https://huggingface.co/spaces/${SPACE_REPO}/resolve/main/data/${filename}`,
+      { headers: { 'Authorization': `Bearer ${HF_TOKEN}` } }
+    );
+    if (resp.ok) {
+      const text = await resp.text();
+      // Validate it's valid JSON
+      JSON.parse(text);
+      console.log(`[HF Persist] Downloaded ${filename} from repo (${text.length} bytes)`);
+      return text;
+    }
+  } catch (e) {
+    // File doesn't exist in repo yet or parse error
+  }
+  return null;
+}
+
+// Debounce HF uploads to avoid spamming the API on rapid writes
+const _hfUploadTimers = {};
+function scheduleHfUpload(filename, content) {
+  if (_hfUploadTimers[filename]) clearTimeout(_hfUploadTimers[filename]);
+  _hfUploadTimers[filename] = setTimeout(() => {
+    hfUploadFile(filename, content);
+  }, 5000); // 5s debounce
+}
+
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
-if (!fs.existsSync(USERS_FILE)) {
-  fs.writeFileSync(USERS_FILE, JSON.stringify({}));
+
+// Initialize data files: restore from HF repo if local files are empty/missing
+async function initDataFiles() {
+  for (const filename of HF_PERSIST_FILES) {
+    const localPath = path.join(DATA_DIR, filename);
+    let needsRestore = false;
+    if (!fs.existsSync(localPath)) {
+      needsRestore = true;
+    } else {
+      try {
+        const local = JSON.parse(fs.readFileSync(localPath, 'utf8'));
+        if (Object.keys(local).length === 0) needsRestore = true;
+      } catch (e) {
+        needsRestore = true;
+      }
+    }
+
+    if (needsRestore) {
+      const remoteContent = await hfDownloadFile(filename);
+      if (remoteContent) {
+        fs.writeFileSync(localPath, remoteContent);
+        console.log(`[HF Persist] Restored ${filename} from HF repo`);
+      } else if (!fs.existsSync(localPath)) {
+        fs.writeFileSync(localPath, JSON.stringify({}));
+      }
+    }
+  }
 }
-if (!fs.existsSync(HISTORY_FILE)) {
-  fs.writeFileSync(HISTORY_FILE, JSON.stringify({}));
-}
-if (!fs.existsSync(SESSIONS_FILE)) {
-  fs.writeFileSync(SESSIONS_FILE, JSON.stringify({}));
-}
+
+// Start data file initialization (non-blocking)
+initDataFiles().catch(e => console.error('[HF Persist] Init error:', e.message));
 
 // Session persistence helpers
 function loadPersistedSessions() {
@@ -1680,7 +1787,9 @@ function saveSessions() {
     for (const [token, session] of activeSessions.entries()) {
       obj[token] = session;
     }
-    fs.writeFileSync(SESSIONS_FILE, JSON.stringify(obj, null, 2));
+    const content = JSON.stringify(obj, null, 2);
+    fs.writeFileSync(SESSIONS_FILE, content);
+    scheduleHfUpload('sessions.json', content);
   } catch (e) {
     console.error('[Sessions] Failed to persist sessions:', e.message);
   }
@@ -1784,7 +1893,9 @@ function getUsers() {
 }
 
 function saveUsers(users) {
-  fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
+  const content = JSON.stringify(users, null, 2);
+  fs.writeFileSync(USERS_FILE, content);
+  scheduleHfUpload('users.json', content);
 }
 
 function getHistories() {
@@ -1796,7 +1907,9 @@ function getHistories() {
 }
 
 function saveHistories(histories) {
-  fs.writeFileSync(HISTORY_FILE, JSON.stringify(histories, null, 2));
+  const content = JSON.stringify(histories, null, 2);
+  fs.writeFileSync(HISTORY_FILE, content);
+  scheduleHfUpload('history.json', content);
 }
 
 function authenticateToken(req) {
