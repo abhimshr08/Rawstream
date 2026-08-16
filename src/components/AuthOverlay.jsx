@@ -8,6 +8,7 @@ export default function AuthOverlay({
   apiBaseUrl = '',
   isOfflineMode = false,
   backendReachable = null,
+  onSaveHfToken,
   onToggleOfflineMode
 }) {
   const [isRegister, setIsRegister] = useState(false);
@@ -16,11 +17,12 @@ export default function AuthOverlay({
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [tokenInput, setTokenInput] = useState(() => localStorage.getItem('rawstream_hf_token') || '');
 
   if (!show) return null;
 
   const getHfToken = () => {
-    return import.meta.env.VITE_HF_TOKEN || localStorage.getItem('rawstream_hf_token') || '';
+    return import.meta.env.VITE_HF_TOKEN || localStorage.getItem('rawstream_hf_token') || tokenInput || '';
   };
 
   const handleLoginSubmit = async (e) => {
@@ -164,11 +166,50 @@ export default function AuthOverlay({
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: '600', fontSize: '0.85rem' }}>
               <AlertTriangle size={16} />
-              <span>Backend Server Offline</span>
+              <span>Backend Server Offline / Private Space</span>
             </div>
             <p style={{ margin: 0, fontSize: '0.75rem', color: 'rgba(255,255,255,0.7)', lineHeight: '1.4' }}>
-              We could not establish a connection to the Express backend.
+              Could not connect to Express backend. If your HF Space is private, enter your HF Access Token below:
             </p>
+            <div style={{
+              display: 'flex',
+              gap: '6px',
+              marginTop: '4px'
+            }}>
+              <input
+                type="password"
+                placeholder="hf_..."
+                value={tokenInput}
+                onChange={(e) => setTokenInput(e.target.value)}
+                style={{
+                  flex: 1,
+                  background: 'rgba(0, 0, 0, 0.3)',
+                  border: '1px solid rgba(255, 255, 255, 0.2)',
+                  borderRadius: '4px',
+                  padding: '4px 8px',
+                  color: 'white',
+                  fontSize: '0.75rem'
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  if (onSaveHfToken) onSaveHfToken(tokenInput.trim());
+                }}
+                style={{
+                  background: 'var(--accent-primary, #3b82f6)',
+                  border: 'none',
+                  color: 'white',
+                  borderRadius: '4px',
+                  padding: '4px 10px',
+                  fontSize: '0.75rem',
+                  cursor: 'pointer',
+                  fontWeight: '600'
+                }}
+              >
+                Connect
+              </button>
+            </div>
             {onToggleOfflineMode && (
               <button
                 type="button"
