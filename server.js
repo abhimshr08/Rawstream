@@ -1704,22 +1704,35 @@ const HF_PERSIST_FILES = ['users.json', 'sessions.json', 'history.json'];
 async function hfUploadFile(filename, content) {
   if (!HF_TOKEN) return;
   try {
+    const base64Content = Buffer.from(content, 'utf8').toString('base64');
     const resp = await fetch(
-      `https://huggingface.co/api/spaces/${SPACE_REPO}/upload/main/data/${filename}`,
+      `https://huggingface.co/api/spaces/${SPACE_REPO}/commit/main`,
       {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${HF_TOKEN}`,
           'Content-Type': 'application/json'
         },
-        body: content
+        body: JSON.stringify({
+          summary: `Sync data/${filename}`,
+          operations: [
+            {
+              operation: 'addOrUpdate',
+              path: `data/${filename}`,
+              content: base64Content
+            }
+          ]
+        })
       }
     );
     if (resp.ok) {
       console.log(`[HF Persist] Uploaded ${filename} to repo`);
+    } else {
+      const errText = await resp.text();
+      console.warn(`[HF Persist] Upload failed (${resp.status}): ${errText}`);
     }
   } catch (e) {
-    // Silently ignore upload errors — local filesystem is primary
+    console.error(`[HF Persist] Upload exception:`, e.message);
   }
 }
 
@@ -1727,7 +1740,7 @@ async function hfDownloadFile(filename) {
   if (!HF_TOKEN) return null;
   try {
     const resp = await fetch(
-      `https://huggingface.co/spaces/${SPACE_REPO}/resolve/main/data/${filename}`,
+      `https://huggingface.co/spaces/${SPACE_REPO}/raw/main/data/${filename}`,
       { headers: { 'Authorization': `Bearer ${HF_TOKEN}` } }
     );
     if (resp.ok) {
@@ -1784,8 +1797,8 @@ async function initDataFiles() {
   }
 }
 
-// Start data file initialization (non-blocking)
-initDataFiles().catch(e => console.error('[HF Persist] Init error:', e.message));
+// Perform blocking data file restore on boot BEFORE user operations
+await initDataFiles().catch(e => console.error('[HF Persist] Init error:', e.message));
 
 // Session persistence helpers
 function loadPersistedSessions() {
