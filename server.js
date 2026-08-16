@@ -237,11 +237,11 @@ async function fetchTorrentFromCaches(infoHash) {
     `http://torrage.info/torrent.php?h=${cleanHash}`
   ];
 
-  for (const url of caches) {
+  const fetchOne = async (url) => {
+    console.log(`[TorrentManager] Parallel fetch from cache: ${url}`);
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), 2500); // Fast 2.5s timeout
     try {
-      console.log(`[TorrentManager] Trying to fetch torrent from cache: ${url}`);
-      const controller = new AbortController();
-      const id = setTimeout(() => controller.abort(), 7000); // 7s timeout per cache
       const res = await fetch(url, {
         signal: controller.signal,
         headers: {
@@ -253,20 +253,23 @@ async function fetchTorrentFromCaches(infoHash) {
         const buffer = await res.arrayBuffer();
         if (buffer && buffer.byteLength > 0) {
           const uint8 = new Uint8Array(buffer);
-          // A valid bencoded dictionary must start with 'd' (ASCII 100)
-          if (uint8[0] === 100) {
+          if (uint8[0] === 100) { // 'd' bencoded dictionary
             console.log(`[TorrentManager] Successfully retrieved torrent buffer from cache (${buffer.byteLength} bytes)`);
             return Buffer.from(buffer);
-          } else {
-            console.warn(`[TorrentManager] Cached torrent file from ${url} does not appear to be bencoded (starts with ${uint8[0]}). Ignoring.`);
           }
         }
       }
     } catch (e) {
-      console.warn(`[TorrentManager] Cache fetch failed for ${url}:`, e.message);
+      clearTimeout(id);
     }
+    throw new Error('Cache miss');
+  };
+
+  try {
+    return await Promise.any(caches.map(fetchOne));
+  } catch (e) {
+    return null;
   }
-  return null;
 }
 
 async function addTorrent(torrentSource) {
@@ -641,7 +644,7 @@ class GrowingFileReader extends Readable {
     const tryOpen = () => {
       fs.open(this.filePath, 'r', (err, fd) => {
         if (err) {
-          if ((err.code === 'ENOENT' || err.code === 'EBUSY') && attempts < 50 && !this.isClosed) {
+          if (attempts < 100 && !this.isClosed) {
             attempts++;
             setTimeout(tryOpen, 100);
             return;
@@ -1619,12 +1622,13 @@ app.get('/api/torrent/stream', async (req, res) => {
         const fileStartPiece = Math.floor((file.offset || 0) / torrent.pieceLength);
         const fileEndPiece = Math.floor(((file.offset || 0) + file.length - 1) / torrent.pieceLength);
 
-        const isMp4File = file.name.toLowerCase().endsWith('.mp4');
-        // Urgent highest priority (255) for file start pieces
-        torrent.select(fileStartPiece, Math.min(torrent.pieces.length - 1, fileStartPiece + 4), 255);
-        if (isMp4File) {
-          // For MP4 files, also request end pieces for moov atom
-          torrent.select(Math.max(0, fileEndPiece - 2), fileEndPiece, 255);
+        const extName = path.extname(file.name).toLowerCase();
+        const needsEndPieces = ['.mp4', '.mkv', '.avi', '.mov', '.webm'].includes(extName);
+        // Urgent highest priority (255) for file start pieces (first 8 pieces)
+        torrent.select(fileStartPiece, Math.min(torrent.pieces.length - 1, fileStartPiece + 8), 255);
+        if (needsEndPieces) {
+          // Request end pieces for moov atom (MP4) or Cues/SeekHead index (MKV/WebM/AVI)
+          torrent.select(Math.max(0, fileEndPiece - 6), fileEndPiece, 255);
         }
         
         // Maximum priority (255) for immediate 8MB window around active seek target
