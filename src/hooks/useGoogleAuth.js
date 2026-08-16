@@ -34,7 +34,12 @@ export function useGoogleAuth(apiBaseUrl = '') {
     }
 
     // Fallback: Fetch from backend /api/config
-    fetch(`${apiBaseUrl}/api/config`)
+    const storedHfToken = localStorage.getItem('rawstream_hf_token');
+    const headers = {};
+    if (storedHfToken) {
+      headers['Authorization'] = `Bearer ${storedHfToken.trim()}`;
+    }
+    fetch(`${apiBaseUrl}/api/config`, { headers })
       .then(res => res.json())
       .then(data => {
         if (data.googleClientId) {

@@ -19,6 +19,10 @@ export default function AuthOverlay({
 
   if (!show) return null;
 
+  const getHfToken = () => {
+    return import.meta.env.VITE_HF_TOKEN || localStorage.getItem('rawstream_hf_token') || '';
+  };
+
   const handleLoginSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -46,9 +50,14 @@ export default function AuthOverlay({
     }
 
     try {
+      const activeHfToken = getHfToken();
+      const headers = { 'Content-Type': 'application/json' };
+      if (activeHfToken) {
+        headers['Authorization'] = `Bearer ${activeHfToken.trim()}`;
+      }
       const res = await fetch(`${apiBaseUrl}/api/auth/login`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ username: username.trim(), password })
       });
       const data = await res.json();
@@ -97,9 +106,14 @@ export default function AuthOverlay({
     }
 
     try {
+      const activeHfToken = getHfToken();
+      const headers = { 'Content-Type': 'application/json' };
+      if (activeHfToken) {
+        headers['Authorization'] = `Bearer ${activeHfToken.trim()}`;
+      }
       const res = await fetch(`${apiBaseUrl}/api/auth/register`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ username: username.trim(), password })
       });
       const data = await res.json();

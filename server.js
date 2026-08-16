@@ -1776,8 +1776,9 @@ function saveHistories(histories) {
 }
 
 function authenticateToken(req) {
+  const customHeader = req.headers['x-auth-token'];
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
+  const token = customHeader || (authHeader && authHeader.split(' ')[1]);
   if (!token) return null;
   const session = activeSessions.get(token);
   if (session) {
@@ -1787,8 +1788,9 @@ function authenticateToken(req) {
 }
 
 function authenticateAdmin(req) {
+  const customHeader = req.headers['x-auth-token'];
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
+  const token = customHeader || (authHeader && authHeader.split(' ')[1]);
   if (!token) return null;
   const session = activeSessions.get(token);
   if (session && session.isAdmin) {

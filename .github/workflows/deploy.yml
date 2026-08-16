@@ -39,6 +39,7 @@ jobs:
         env:
           # Base path for GitHub Pages (/<repo-name>/)
           VITE_BASE_URL: /Rawstream/
+          VITE_HF_TOKEN: ${{ secrets.HF_TOKEN }}
           # Admin credentials — set these in:
           # GitHub repo → Settings → Secrets and variables → Actions → New repository secret
           VITE_ADMIN_USERNAME: ${{ secrets.VITE_ADMIN_USERNAME }}

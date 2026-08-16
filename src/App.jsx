@@ -67,6 +67,7 @@ export default function App() {
     if (stored !== null) return stored === 'true';
     return false;
   });
+  const [hfToken] = useState(() => import.meta.env.VITE_HF_TOKEN || localStorage.getItem('rawstream_hf_token') || '');
   const [backendReachable, setBackendReachable] = useState(null);
 
   useEffect(() => {
@@ -77,7 +78,12 @@ export default function App() {
     const pingBackend = async () => {
       setBackendReachable(null);
       try {
-        const res = await fetch(`${apiBaseUrl}/api/config`);
+        const headers = {};
+        const storedHfToken = localStorage.getItem('rawstream_hf_token') || hfToken;
+        if (storedHfToken) {
+          headers['Authorization'] = `Bearer ${storedHfToken.trim()}`;
+        }
+        const res = await fetch(`${apiBaseUrl}/api/config`, { headers });
         const contentType = res.headers.get('content-type');
         if (res.ok && contentType && contentType.includes('application/json')) {
           setBackendReachable(true);
@@ -89,7 +95,7 @@ export default function App() {
       }
     };
     pingBackend();
-  }, [apiBaseUrl, isOfflineMode]);
+  }, [apiBaseUrl, isOfflineMode, hfToken]);
 
   // Google OAuth (for quota-exceeded Drive files)
   const googleAuth = useGoogleAuth(apiBaseUrl);
@@ -276,14 +282,16 @@ export default function App() {
   };
 
   const authenticatedFetch = async (url, options = {}) => {
+    const storedHfToken = localStorage.getItem('rawstream_hf_token') || hfToken;
     const headers = {
       ...options.headers,
-      'Authorization': `Bearer ${session.token}`
+      'Authorization': storedHfToken ? `Bearer ${storedHfToken.trim()}` : `Bearer ${session.token}`,
+      'x-auth-token': session.token
     };
     try {
       const fullUrl = url.startsWith('http://') || url.startsWith('https://') ? url : `${apiBaseUrl}${url}`;
       const res = await fetch(fullUrl, { ...options, headers });
-      if (res.status === 401) {
+      if (res.status === 401 && !storedHfToken) {
         handleUnauthorized();
       }
       return res;
@@ -304,14 +312,16 @@ export default function App() {
   };
 
   const sessionFetch = async (targetSession, url, options = {}) => {
+    const storedHfToken = localStorage.getItem('rawstream_hf_token') || hfToken;
     const headers = {
       ...options.headers,
-      Authorization: `Bearer ${targetSession.token}`
+      'Authorization': storedHfToken ? `Bearer ${storedHfToken.trim()}` : `Bearer ${targetSession.token}`,
+      'x-auth-token': targetSession.token
     };
     try {
       const fullUrl = url.startsWith('http://') || url.startsWith('https://') ? url : `${apiBaseUrl}${url}`;
       const res = await fetch(fullUrl, { ...options, headers });
-      if (res.status === 401) {
+      if (res.status === 401 && !storedHfToken) {
         handleUnauthorized();
       }
       return res;
@@ -1476,6 +1486,38 @@ export default function App() {
             </p>
           </div>
 
+          <div className="auth-input-group" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <label htmlFor="settings-hf-token" style={{ fontSize: '0.85rem', color: 'rgba(255,255,255,0.7)', fontWeight: '500' }}>Hugging Face Access Token (Private Spaces)</label>
+            <input
+              type="password"
+              id="settings-hf-token"
+              placeholder="Paste Hugging Face Bearer Token (hf_...)"
+              defaultValue={hfToken}
+              onChange={(e) => {
+                const val = e.target.value.trim();
+                setHfToken(val);
+                if (val) {
+                  localStorage.setItem('rawstream_hf_token', val);
+                } else {
+                  localStorage.removeItem('rawstream_hf_token');
+                }
+              }}
+              style={{
+                background: 'rgba(255,255,255,0.03)',
+                border: '1px solid rgba(255,255,255,0.1)',
+                borderRadius: '6px',
+                padding: '0.5rem 0.75rem',
+                color: 'white',
+                fontSize: '0.85rem',
+                width: '100%',
+                boxSizing: 'border-box'
+              }}
+            />
+            <p style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.4)', margin: '0.25rem 0 0 0', lineHeight: '1.4' }}>
+              Required to connect from GitHub Pages to a Private Hugging Face Space. Stored securely in local browser storage.
+            </p>
+          </div>
+
           <div className="auth-input-group" style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '0.75rem', background: 'rgba(255,255,255,0.02)', padding: '0.75rem', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.06)' }}>
             <input
               type="checkbox"
@@ -1639,6 +1681,17 @@ export default function App() {
         apiBaseUrl={apiBaseUrl}
         isOfflineMode={isOfflineMode}
         backendReachable={backendReachable}
+        hfToken={hfToken}
+        onSaveHfToken={(token) => {
+          setHfToken(token);
+          if (token) {
+            localStorage.setItem('rawstream_hf_token', token);
+            addToast('Hugging Face Access Token saved!', 'success');
+          } else {
+            localStorage.removeItem('rawstream_hf_token');
+            addToast('Hugging Face Access Token removed', 'info');
+          }
+        }}
         onToggleOfflineMode={(val) => {
           setIsOfflineMode(val);
           if (val) {
