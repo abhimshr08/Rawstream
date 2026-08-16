@@ -464,6 +464,11 @@ Genießen Sie den Film!`;
         deselect: true,
         announce: DEFAULT_TRACKERS
       });
+      // Explicitly register all default trackers on live instance
+      DEFAULT_TRACKERS.forEach(tr => {
+        try { torrent.addTracker(tr); } catch (e) {}
+      });
+      try { torrent.announce(); } catch (e) {}
     } catch (err) {
       return reject(err);
     }
@@ -1169,6 +1174,11 @@ app.get('/api/stream', async (req, res) => {
     try {
       const u = new URL(resolvedUrl, `http://127.0.0.1:${PORT}`);
       resolvedUrl = `http://127.0.0.1:${PORT}${u.pathname}${u.search}`;
+      
+      // If this is a torrent stream, ensure we also add trackers if provided in the original query
+      if (u.pathname.includes('/api/torrent/stream') && req.query.tracker) {
+         resolvedUrl += (u.search ? '&' : '?') + 'tracker=' + encodeURIComponent(req.query.tracker);
+      }
     } catch (e) {}
   }
 
@@ -1188,13 +1198,18 @@ app.get('/api/stream', async (req, res) => {
 
   if (transcode === 'true' || req.query.quality) {
     const startT = start || '0';
-    const supportedVideo = ['h264','vp8','vp9','av1'];
-    const supportedAudio = ['aac','mp3','opus','vorbis'];
+    const unsupportedVideo = ['h265', 'hevc', 'dvh1', 'dvhe', 'vc1', 'mpeg2video', 'theora'];
+    const unsupportedAudio = ['ac3', 'eac3', 'dts', 'dtsc', 'dtse', 'truehd', 'mlp'];
     const targetQuality = req.query.quality || 'original';
 
+    const reqVcodec = (vcodec || '').toLowerCase();
+    const reqAcodec = (acodec || '').toLowerCase();
+
     const isSeeking = startT && startT !== '0';
-    const canCopyVideo = supportedVideo.includes((vcodec || '').toLowerCase());
-    const canCopyAudio = supportedAudio.includes((acodec || '').toLowerCase());
+    // Default to stream copy (-c:v copy) unless video codec is explicitly unsupported (like HEVC)
+    const canCopyVideo = !unsupportedVideo.includes(reqVcodec);
+    // Default to stream copy (-c:a copy) unless audio codec is multi-channel/unsupported surround
+    const canCopyAudio = !unsupportedAudio.includes(reqAcodec);
 
     const isTorrentStream = resolvedUrl.includes('/api/torrent/stream');
 
