@@ -53,7 +53,25 @@ const activeTorrents = new Map(); // key: infoHash (lowercased), value: { torren
 
 async function getTorrentClient() {
   if (!torrentClient) {
-    torrentClient = new WebTorrent();
+    torrentClient = new WebTorrent({
+      dht: {
+        bootstrap: [
+          'router.bittorrent.com:6881',
+          'router.utorrent.com:6881',
+          'dht.transmissionbt.com:6881',
+          'dht.aelitis.com:6881'
+        ]
+      },
+      maxConns: 100,
+      tracker: {
+        rtcConfig: {
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:global.stun.twilio.com:3478' }
+          ]
+        }
+      }
+    });
     torrentClient.on('error', (err) => {
       console.error('[WebTorrent Client Error]:', err.message);
     });
@@ -119,7 +137,7 @@ async function getTorrentClient() {
 }
 
 const DEFAULT_TRACKERS = [
-  // HTTP trackers (work in Docker/cloud environments where UDP is blocked)
+  // HTTP / HTTPS trackers (vital in Docker/cloud envs where UDP is blocked)
   'http://tracker.opentrackr.org:1337/announce',
   'http://tracker.openbittorrent.com:80/announce',
   'http://open.acgtracker.com:1096/announce',
@@ -127,21 +145,23 @@ const DEFAULT_TRACKERS = [
   'https://tracker.gbitt.info/announce',
   'https://1337.abcvg.info/announce',
   'https://tracker.lilithraws.org/announce',
-  // UDP trackers (may be blocked in some cloud envs)
-  'udp://tracker.openbittorrent.com:80/announce',
+  'https://tracker.tamerspace.org/announce',
+  'https://tracker.ren2.xyz:443/announce',
+  'http://p4p.arenabg.com:1337/announce',
+  'http://tracker.elisan.nu:6969/announce',
+  // UDP trackers (attempted where allowed)
   'udp://tracker.opentrackr.org:1337/announce',
-  'udp://tracker.torrent.eu.org:451/announce',
   'udp://open.stealth.si:80/announce',
+  'udp://tracker.torrent.eu.org:451/announce',
   'udp://exodus.desync.com:6969/announce',
-  'udp://tracker.moeking.me:6969/announce',
   'udp://open.demonii.com:1337/announce',
-  'udp://tracker.tiny-vps.com:6969/announce',
-  'udp://tracker.pirateparty.gr:6969/announce',
+  'udp://tracker.openbittorrent.com:80/announce',
   // WebSocket trackers (WebTorrent compatible)
   'wss://tracker.openwebtorrent.com',
   'wss://tracker.btorrent.xyz',
   'wss://tracker.fastcast.nz',
-  'wss://tracker.files.fm'
+  'wss://tracker.files.fm',
+  'wss://tracker.webtorrent.dev'
 ];
 
 function ensureMagnetTrackers(magnet) {
