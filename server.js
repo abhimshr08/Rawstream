@@ -1698,7 +1698,7 @@ const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 // HF Hub persistence: sync critical data files to the Space repo so they survive rebuilds
 const HF_TOKEN = process.env.HF_TOKEN || '';
-const SPACE_REPO = process.env.SPACE_ID || 'Maverick9876/Rawstream';
+const DATASET_REPO = process.env.DATASET_REPO || 'Maverick9876/rawstream-data';
 const HF_PERSIST_FILES = ['users.json', 'sessions.json', 'history.json'];
 
 async function hfUploadFile(filename, content) {
@@ -1706,7 +1706,7 @@ async function hfUploadFile(filename, content) {
   try {
     const base64Content = Buffer.from(content, 'utf8').toString('base64');
     const resp = await fetch(
-      `https://huggingface.co/api/spaces/${SPACE_REPO}/commit/main`,
+      `https://huggingface.co/api/datasets/${DATASET_REPO}/commit/main`,
       {
         method: 'POST',
         headers: {
@@ -1714,11 +1714,11 @@ async function hfUploadFile(filename, content) {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          summary: `Sync data/${filename}`,
+          summary: `Sync ${filename}`,
           operations: [
             {
               operation: 'addOrUpdate',
-              path: `data/${filename}`,
+              path: filename,
               content: base64Content
             }
           ]
@@ -1726,13 +1726,13 @@ async function hfUploadFile(filename, content) {
       }
     );
     if (resp.ok) {
-      console.log(`[HF Persist] Uploaded ${filename} to repo`);
+      console.log(`[HF Persist] Uploaded ${filename} to dataset`);
     } else {
       const errText = await resp.text();
-      console.warn(`[HF Persist] Upload failed (${resp.status}): ${errText}`);
+      console.warn(`[HF Persist] Dataset upload failed (${resp.status}): ${errText}`);
     }
   } catch (e) {
-    console.error(`[HF Persist] Upload exception:`, e.message);
+    console.error(`[HF Persist] Dataset upload exception:`, e.message);
   }
 }
 
@@ -1740,18 +1740,18 @@ async function hfDownloadFile(filename) {
   if (!HF_TOKEN) return null;
   try {
     const resp = await fetch(
-      `https://huggingface.co/spaces/${SPACE_REPO}/raw/main/data/${filename}`,
+      `https://huggingface.co/datasets/${DATASET_REPO}/raw/main/${filename}`,
       { headers: { 'Authorization': `Bearer ${HF_TOKEN}` } }
     );
     if (resp.ok) {
       const text = await resp.text();
       // Validate it's valid JSON
       JSON.parse(text);
-      console.log(`[HF Persist] Downloaded ${filename} from repo (${text.length} bytes)`);
+      console.log(`[HF Persist] Downloaded ${filename} from dataset (${text.length} bytes)`);
       return text;
     }
   } catch (e) {
-    // File doesn't exist in repo yet or parse error
+    // File doesn't exist in dataset repo yet or parse error
   }
   return null;
 }
