@@ -1815,29 +1815,42 @@ if (!fs.existsSync(DATA_DIR)) {
 }
 
 // Initialize data files: restore from HF repo if local files are empty/missing
+// ALWAYS download remote data and merge with local to prevent data loss across restarts
 async function initDataFiles() {
   for (const filename of HF_PERSIST_FILES) {
     const localPath = path.join(DATA_DIR, filename);
-    let needsRestore = false;
-    if (!fs.existsSync(localPath)) {
-      needsRestore = true;
-    } else {
-      try {
-        const local = JSON.parse(fs.readFileSync(localPath, 'utf8'));
-        if (Object.keys(local).length === 0) needsRestore = true;
-      } catch (e) {
-        needsRestore = true;
-      }
+    
+    // Always try to download remote data
+    const remoteContent = await hfDownloadFile(filename);
+    let remoteData = {};
+    if (remoteContent) {
+      try { remoteData = JSON.parse(remoteContent); } catch (e) {}
     }
-
-    if (needsRestore) {
-      const remoteContent = await hfDownloadFile(filename);
-      if (remoteContent) {
-        fs.writeFileSync(localPath, remoteContent);
-        console.log(`[HF Persist] Restored ${filename} from HF repo`);
-      } else if (!fs.existsSync(localPath)) {
-        fs.writeFileSync(localPath, JSON.stringify({}));
-      }
+    
+    // Load local data if it exists
+    let localData = {};
+    if (fs.existsSync(localPath)) {
+      try { localData = JSON.parse(fs.readFileSync(localPath, 'utf8')); } catch (e) {}
+    }
+    
+    // Merge: remote data is the authoritative source, local data supplements it
+    // Use whichever has MORE entries as the base, then merge the other into it
+    const remoteCount = Object.keys(remoteData).length;
+    const localCount = Object.keys(localData).length;
+    let merged;
+    if (remoteCount >= localCount) {
+      merged = { ...remoteData, ...localData }; // local overrides on conflict
+    } else {
+      merged = { ...localData }; // local has more, keep it
+    }
+    
+    // Only write if we have data
+    if (Object.keys(merged).length > 0) {
+      fs.writeFileSync(localPath, JSON.stringify(merged, null, 2));
+      console.log(`[HF Persist] Restored ${filename} from HF repo (${remoteCount} remote, ${localCount} local, ${Object.keys(merged).length} merged)`);
+    } else if (!fs.existsSync(localPath)) {
+      fs.writeFileSync(localPath, JSON.stringify({}));
+      console.log(`[HF Persist] Created empty ${filename}`);
     }
   }
 }
@@ -1968,7 +1981,31 @@ function getUsers() {
 function saveUsers(users) {
   const content = JSON.stringify(users, null, 2);
   fs.writeFileSync(USERS_FILE, content);
-  scheduleHfUpload('users.json', content);
+  // Only upload to HF if we have actual user data (prevent uploading empty/admin-only over a full dataset)
+  const userCount = Object.keys(users).length;
+  if (userCount > 1) {
+    // Has real users beyond just admin — safe to upload
+    scheduleHfUpload('users.json', content);
+  } else if (userCount === 1) {
+    // Only admin exists — check if remote has more users before overwriting
+    hfDownloadFile('users.json').then(remote => {
+      if (remote) {
+        try {
+          const remoteUsers = JSON.parse(remote);
+          if (Object.keys(remoteUsers).length <= 1) {
+            // Remote also only has admin or empty — safe to upload
+            scheduleHfUpload('users.json', content);
+          } else {
+            console.log(`[HF Persist] Skipping users.json upload: local has ${userCount} user(s) but remote has ${Object.keys(remoteUsers).length}`);
+          }
+        } catch (e) {
+          scheduleHfUpload('users.json', content);
+        }
+      } else {
+        scheduleHfUpload('users.json', content);
+      }
+    }).catch(() => scheduleHfUpload('users.json', content));
+  }
 }
 
 function getHistories() {
