@@ -473,14 +473,36 @@ Genießen Sie den Film!`;
       });
       try { torrent.announce(); } catch (e) {}
     } catch (err) {
+      // "Cannot add duplicate torrent" — the torrent is already loaded under its real infoHash.
+      // Find it in client.torrents and return it instead of failing.
+      if (err.message && err.message.includes('duplicate torrent')) {
+        const existing = client.torrents.find(t => {
+          const th = (t.infoHash || '').toLowerCase();
+          return err.message.toLowerCase().includes(th);
+        }) || client.torrents.find(t => t.infoHash);
+        if (existing) {
+          const realHash = existing.infoHash.toLowerCase();
+          console.log(`[TorrentManager] Duplicate detected — reusing existing torrent: ${realHash}`);
+          const entry = { torrent: existing, lastAccessed: Date.now() };
+          activeTorrents.set(realHash, entry);
+          // Also index under the requested infoHash so future lookups hit the cache
+          if (infoHash && infoHash !== realHash) activeTorrents.set(infoHash, entry);
+          if (existing.ready) return resolve(existing);
+          return existing.once('ready', () => resolve(existing));
+        }
+      }
       return reject(err);
     }
 
     torrent.once('infoHash', () => {
-      activeTorrents.set(torrent.infoHash.toLowerCase(), {
-        torrent,
-        lastAccessed: Date.now()
-      });
+      const realHash = torrent.infoHash.toLowerCase();
+      const entry = { torrent, lastAccessed: Date.now() };
+      activeTorrents.set(realHash, entry);
+      // Also index under the requested infoHash so future lookups hit the cache
+      if (infoHash && infoHash !== realHash) {
+        console.log(`[TorrentManager] Real infoHash ${realHash} differs from requested ${infoHash} — cross-indexing`);
+        activeTorrents.set(infoHash, entry);
+      }
       cleanOldTorrents();
     });
 
@@ -494,7 +516,9 @@ Genießen Sie den Film!`;
         lower.includes('fetch failed') || 
         lower.includes('getaddrinfo') || 
         lower.includes('enotfound') ||
-        lower.includes('announce')
+        lower.includes('announce') ||
+        lower.includes('aborted') ||
+        lower.includes('operation was aborted')
       ) {
         return;
       }
@@ -521,7 +545,24 @@ Genießen Sie den Film!`;
     });
 
     torrent.once('error', (err) => {
-      console.error(`[TorrentManager] Torrent error:`, err.message);
+      const msg = err.message || String(err);
+      // Gracefully recover from duplicate torrent errors (real hash != requested hash)
+      if (msg.includes('duplicate torrent')) {
+        const existing = client.torrents.find(t => {
+          const th = (t.infoHash || '').toLowerCase();
+          return msg.toLowerCase().includes(th);
+        }) || client.torrents.find(t => t.infoHash);
+        if (existing) {
+          const realHash = existing.infoHash.toLowerCase();
+          console.log(`[TorrentManager] Duplicate (event) — reusing existing torrent: ${realHash}`);
+          const entry = { torrent: existing, lastAccessed: Date.now() };
+          activeTorrents.set(realHash, entry);
+          if (infoHash && infoHash !== realHash) activeTorrents.set(infoHash, entry);
+          if (existing.ready) return resolve(existing);
+          return existing.once('ready', () => resolve(existing));
+        }
+      }
+      console.error(`[TorrentManager] Torrent error:`, msg);
       if (torrent.infoHash) activeTorrents.delete(torrent.infoHash.toLowerCase());
       reject(err);
     });
