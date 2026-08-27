@@ -83,6 +83,8 @@ It utilizes a high-performance backend transcoding proxy powered by **WebTorrent
     ```bash
     npm run dev
     ```
+    Open `http://localhost:5173`; the Vite proxy forwards `/api` requests to the
+    Express torrent server on port 3000. Run `npm start` in a second terminal.
 *   **Production Build & Node Server:**
     ```bash
     npm run build

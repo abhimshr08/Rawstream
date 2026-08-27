@@ -968,12 +968,9 @@ export default function App() {
 
       if (initialInfo.files && initialInfo.files.length > 0) {
         // We already have files (e.g. uploaded .torrent file)
-        const isNative = initialFile && (
-          initialFile.name.toLowerCase().endsWith('.mp4') ||
-          initialFile.name.toLowerCase().endsWith('.webm') ||
-          initialFile.name.toLowerCase().endsWith('.mov')
-        );
-        setNeedsTranscode(!isNative);
+        // Torrent filenames do not identify the embedded audio codec. Always
+        // use the server transcode path so AC3/DTS/TrueHD tracks become AAC.
+        setNeedsTranscode(true);
         setMediaDuration(0);
         setVcodec('h264');
         setAcodec('aac');
@@ -1006,7 +1003,7 @@ export default function App() {
           .then(meta => {
             logDebug(`[Torrent Probe] Result: duration=${meta.duration}s, needsTranscode=${meta.needsTranscode}, vcodec=${meta.videoCodec}, acodec=${meta.audioCodec}`);
             setMediaDuration(meta.duration || 0);
-            setNeedsTranscode(meta.needsTranscode !== undefined ? meta.needsTranscode : true);
+            setNeedsTranscode(true);
             setVcodec(meta.videoCodec || 'h264');
             setAcodec(meta.audioCodec || 'aac');
           })
@@ -1034,13 +1031,9 @@ export default function App() {
               const targetIndex = preferredFile ? preferredFile.index : 0;
               const newStreamUrl = buildTorrentServerStreamUrl(mergedInfo.infoHash, targetIndex);
 
-              const fileName = preferredFile ? preferredFile.name.toLowerCase() : '';
-              const containsHevcOrHighCodec = fileName.includes('hevc') || fileName.includes('h265') || fileName.includes('x265') || fileName.includes('10bit') || fileName.includes('hdr') || fileName.includes('ddp') || fileName.includes('dts') || fileName.includes('ac3') || fileName.includes('web-dl') || fileName.includes('1080p') || fileName.includes('2160p') || fileName.includes('4k');
-              
-              // Torrent releases overwhelmingly use HEVC/H.265 or non-native audio/video codecs.
-              // Always default server torrent streams to needsTranscode = true unless explicitly verified as standard H.264 MP4.
-              const isStrictNativeMp4 = fileName.endsWith('.mp4') && !containsHevcOrHighCodec;
-              setNeedsTranscode(!isStrictNativeMp4);
+              // Torrent filenames do not identify the embedded audio codec.
+              // Always normalize server torrent playback to browser-safe AAC.
+              setNeedsTranscode(true);
               setMediaDuration(mergedInfo.duration || 0);
               setVcodec('h264');
               setAcodec('aac');
@@ -1091,11 +1084,7 @@ export default function App() {
             // Backend server is available: use server torrent stream route so FFmpeg transcodes MKV/H.265 files for full video display
             logDebug('[Torrent] Using server stream route for torrent playback.');
             const newStreamUrl = buildTorrentServerStreamUrl(initialInfo.infoHash, 0);
-            const isPrefNative = initialInfo.name && (
-              initialInfo.name.toLowerCase().endsWith('.mp4') ||
-              initialInfo.name.toLowerCase().endsWith('.webm')
-            );
-            setNeedsTranscode(!isPrefNative);
+            setNeedsTranscode(true);
             const videoObj = attachResumeProgress({
               id: initialInfo.infoHash,
               title: initialInfo.name || 'Torrent Stream',
@@ -1128,12 +1117,9 @@ export default function App() {
   const selectTorrentFile = (info, file) => {
     logDebug(`Switching to torrent file: "${file.name}"`);
     const magnetUri = `magnet:?xt=urn:btih:${info.infoHash}&dn=${encodeURIComponent(info.name)}`;
-    const isFileNative = file.name.toLowerCase().endsWith('.mp4') ||
-      file.name.toLowerCase().endsWith('.webm') ||
-      file.name.toLowerCase().endsWith('.mov');
-    const streamUrl = buildTorrentServerStreamUrl(info.infoHash, file.index, !isFileNative);
+    const streamUrl = buildTorrentServerStreamUrl(info.infoHash, file.index, true);
 
-    setNeedsTranscode(!isFileNative);
+    setNeedsTranscode(true);
     setMediaDuration(0);
     setVcodec('h264');
     setAcodec('aac');
@@ -1163,7 +1149,7 @@ export default function App() {
       .then(meta => {
         logDebug(`[Torrent File Probe] Result: duration=${meta.duration}s, needsTranscode=${meta.needsTranscode}`);
         setMediaDuration(meta.duration || 0);
-        setNeedsTranscode(meta.needsTranscode !== undefined ? meta.needsTranscode : true);
+        setNeedsTranscode(true);
         setVcodec(meta.videoCodec || 'h264');
         setAcodec(meta.audioCodec || 'aac');
       })

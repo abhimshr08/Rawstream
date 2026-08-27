@@ -1242,26 +1242,26 @@ app.get('/api/stream', async (req, res) => {
 
   if (transcode === 'true' || req.query.quality) {
     const startT = start || '0';
-    const unsupportedVideo = ['h265', 'hevc', 'dvh1', 'dvhe', 'vc1', 'mpeg2video', 'theora'];
-    const unsupportedAudio = ['ac3', 'eac3', 'dts', 'dtsc', 'dtse', 'truehd', 'mlp'];
+    const supportedVideo = ['h264', 'vp8', 'vp9', 'av1'];
+    const supportedAudio = ['aac', 'mp3', 'opus', 'vorbis'];
     const targetQuality = req.query.quality || 'original';
 
-    const reqVcodec = (vcodec || '').toLowerCase();
-    const reqAcodec = (acodec || '').toLowerCase();
-
     const isSeeking = startT && startT !== '0';
-    // Default to stream copy (-c:v copy) unless video codec is explicitly unsupported (like HEVC)
-    const canCopyVideo = !unsupportedVideo.includes(reqVcodec);
-    // Default to stream copy (-c:a copy) unless audio codec is multi-channel/unsupported surround
-    const canCopyAudio = !unsupportedAudio.includes(reqAcodec);
-
     const isTorrentStream = resolvedUrl.includes('/api/torrent/stream');
+    const sourceVideoCodec = (vcodec || '').toLowerCase();
+    const sourceAudioCodec = (acodec || '').toLowerCase();
+    const canCopyVideo = supportedVideo.includes(sourceVideoCodec);
+    const canCopyAudio = supportedAudio.includes(sourceAudioCodec);
 
     let vopts = [];
     if (targetQuality === '720p') {
       vopts = ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-g', '24', '-threads', '0', '-vf', 'scale=-2:720', '-pix_fmt', 'yuv420p', '-b:v', '1500k', '-maxrate', '2000k', '-bufsize', '3000k'];
     } else if (targetQuality === '480p') {
       vopts = ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-g', '24', '-threads', '0', '-vf', 'scale=-2:480', '-pix_fmt', 'yuv420p', '-b:v', '800k', '-maxrate', '1200k', '-bufsize', '1800k'];
+    } else if (isTorrentStream) {
+      vopts = (canCopyVideo && !isSeeking)
+        ? ['-c:v', 'copy']
+        : ['-c:v', 'libx264', '-preset', 'veryfast', '-profile:v', 'high', '-level:v', '4.1', '-crf', '23', '-pix_fmt', 'yuv420p'];
     } else if (canCopyVideo) {
       // Source is already a browser-compatible codec (h264/vp8/vp9/av1) — just remux, don't re-encode.
       // This reduces CPU usage by ~95% and eliminates transcoding bottleneck.
@@ -1270,7 +1270,10 @@ app.get('/api/stream', async (req, res) => {
       vopts = ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '23', '-g', '24', '-threads', '0', '-pix_fmt', 'yuv420p'];
     }
 
-    const aopts = canCopyAudio
+    // Torrent metadata may be unavailable or may describe only the container.
+    // Always encode torrent audio as AAC so AC3/DTS/TrueHD tracks cannot become
+    // silent in browsers. Preserve compatible audio for regular cloud streams.
+    const aopts = (canCopyAudio && !isTorrentStream)
       ? ['-c:a', 'copy']
       : ['-c:a', 'aac', '-b:a', '192k', '-ac', '2', '-af', 'aresample=async=1'];
 
